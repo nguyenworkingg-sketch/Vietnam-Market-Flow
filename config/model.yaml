@@ -5,10 +5,14 @@ model:
   # Daily production only needs enough observations for MA200 / 52-week high.
   live_lookback_days: 520
   live_max_symbols: 450
+  sector_level: 2            # ICB supersector: broad enough for stable breadth/rotation
   min_price: 3.0              # thousand VND/share
   min_avg_value_20: 10000000000  # 10bn VND/day
   min_history_days: 130
   acceleration_window: 5
+  coverage_reference_days: 30
+  min_cross_section_coverage: 0.70
+  min_cross_section_stocks: 50
 
 weights:
   relative_strength:

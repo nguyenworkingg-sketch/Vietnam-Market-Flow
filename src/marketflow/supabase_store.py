@@ -4,6 +4,7 @@ import json
 import math
 import os
 from dataclasses import dataclass
+from datetime import date, datetime
 from urllib import request, error
 
 import numpy as np
@@ -13,11 +14,11 @@ import pandas as pd
 def _clean_value(v):
     if v is None:
         return None
-    if isinstance(v, (pd.Timestamp,)):
+    if isinstance(v, (pd.Timestamp, datetime, date)):
         return v.isoformat()
     if isinstance(v, np.datetime64):
         return pd.Timestamp(v).isoformat()
-    if isinstance(v, (np.integer,)):
+    if isinstance(v, np.integer):
         return int(v)
     if isinstance(v, (np.floating, float)):
         x = float(v)
@@ -31,6 +32,8 @@ def _records(df: pd.DataFrame, rename: dict[str, str] | None = None) -> list[dic
     x = df.copy()
     if rename:
         x = x.rename(columns=rename)
+    if 'trade_date' in x.columns:
+        x['trade_date'] = pd.to_datetime(x['trade_date']).dt.date
     return [{k: _clean_value(v) for k, v in row.items()} for row in x.to_dict('records')]
 
 
@@ -58,42 +61,85 @@ class SupabaseRESTStore:
             h['Prefer'] = prefer
         return h
 
-    def _post(self, table: str, rows: list[dict], on_conflict: str | None = None):
+    def _post(
+        self,
+        table: str,
+        rows: list[dict],
+        on_conflict: str | None = None,
+        return_representation: bool = False,
+    ):
         if not rows:
-            return
+            return []
         endpoint = f'{self.url}/rest/v1/{table}'
         if on_conflict:
             endpoint += f'?on_conflict={on_conflict}'
         payload = json.dumps(rows, ensure_ascii=False).encode('utf-8')
+        ret = 'representation' if return_representation else 'minimal'
         req = request.Request(
             endpoint,
             data=payload,
-            headers=self._headers('resolution=merge-duplicates,return=minimal'),
+            headers=self._headers(f'resolution=merge-duplicates,return={ret}'),
             method='POST',
+        )
+        try:
+            with request.urlopen(req, timeout=60) as r:
+                body = r.read().decode('utf-8')
+                return json.loads(body) if body else []
+        except error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')
+            raise RuntimeError(f'Supabase write failed table={table} status={e.code}: {body}') from e
+
+    def _patch(self, table: str, query: str, values: dict) -> None:
+        endpoint = f'{self.url}/rest/v1/{table}?{query}'
+        payload = json.dumps({k: _clean_value(v) for k, v in values.items()}, ensure_ascii=False).encode('utf-8')
+        req = request.Request(
+            endpoint,
+            data=payload,
+            headers=self._headers('return=minimal'),
+            method='PATCH',
         )
         try:
             with request.urlopen(req, timeout=60) as r:
                 r.read()
         except error.HTTPError as e:
             body = e.read().decode('utf-8', errors='replace')
-            raise RuntimeError(f'Supabase write failed table={table} status={e.code}: {body}') from e
+            raise RuntimeError(f'Supabase patch failed table={table} status={e.code}: {body}') from e
 
     def _batch_post(self, table: str, rows: list[dict], on_conflict: str | None = None):
         for i in range(0, len(rows), self.batch_size):
             self._post(table, rows[i:i+self.batch_size], on_conflict=on_conflict)
 
-    def start_run(self, provider: str) -> None:
-        self._post('mf_runs', [{'status': 'RUNNING', 'provider': provider}])
+    def start_run(self, provider: str) -> int | None:
+        rows = self._post(
+            'mf_runs',
+            [{'status': 'RUNNING', 'provider': provider}],
+            return_representation=True,
+        )
+        if rows and rows[0].get('run_id') is not None:
+            return int(rows[0]['run_id'])
+        return None
 
-    def finish_run(self, provider: str, latest_trade_date, eligible_stocks: int, status: str = 'SUCCESS', message: str | None = None) -> None:
-        self._post('mf_runs', [{
+    def finish_run(
+        self,
+        run_id: int | None,
+        provider: str,
+        latest_trade_date,
+        eligible_stocks: int,
+        status: str = 'SUCCESS',
+        message: str | None = None,
+    ) -> None:
+        values = {
             'status': status,
             'provider': provider,
-            'latest_trade_date': _clean_value(pd.Timestamp(latest_trade_date).date()) if latest_trade_date is not None else None,
+            'latest_trade_date': pd.Timestamp(latest_trade_date).date() if latest_trade_date is not None else None,
             'eligible_stocks': int(eligible_stocks),
             'message': message,
-            'finished_at': pd.Timestamp.utcnow().isoformat(),
-        }])
+            'finished_at': pd.Timestamp.now(tz='UTC'),
+        }
+        if run_id is None:
+            self._post('mf_runs', [{k: _clean_value(v) for k, v in values.items()}])
+        else:
+            self._patch('mf_runs', f'run_id=eq.{int(run_id)}', values)
 
     def sync_universe(self, universe: pd.DataFrame) -> None:
         cols = [c for c in ['ticker', 'exchange', 'sector', 'name'] if c in universe.columns]
@@ -116,7 +162,7 @@ class SupabaseRESTStore:
         self._batch_post('mf_sector_daily', rows, on_conflict='trade_date,sector')
 
     def sync_regime(self, regime: pd.DataFrame) -> None:
-        cols = ['date','market_score','breadth_ma20','breadth_ma50','median_ret20','liquidity_ratio','regime']
+        cols = ['date','market_score','breadth_ma20','breadth_ma50','median_ret20','liquidity_ratio','regime','coverage_stocks','coverage_reference']
         x = regime[[c for c in cols if c in regime.columns]].copy()
         rows = _records(x, rename={'date':'trade_date'})
         self._batch_post('mf_market_regime', rows, on_conflict='trade_date')

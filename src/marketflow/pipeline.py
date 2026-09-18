@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import pandas as pd
 
@@ -11,14 +12,33 @@ from .dashboard import render_dashboard
 from .supabase_store import SupabaseRESTStore
 
 
+def _valid_cross_section_dates(feat: pd.DataFrame, eligible: pd.Series, model: dict):
+    counts = (feat.loc[eligible]
+              .groupby('date')['ticker'].nunique()
+              .sort_index())
+    if counts.empty:
+        return pd.Index([]), counts, 0
+
+    lookback = int(model.get('coverage_reference_days', 30))
+    recent = counts.tail(lookback)
+    reference = int(recent.max())
+    min_n = max(
+        int(model.get('min_cross_section_stocks', 50)),
+        int(math.ceil(reference * float(model.get('min_cross_section_coverage', 0.70)))),
+    )
+    valid_dates = counts[counts >= min_n].index
+    return valid_dates, counts, reference
+
+
 def run(provider, cfg: dict, root: str | Path, history_start: str | None = None, provider_name: str = 'unknown'):
     root = Path(root)
     model = cfg['model']
     start = history_start or model['history_start']
     sb = SupabaseRESTStore.from_env()
+    run_id = None
     if sb is not None:
         try:
-            sb.start_run(provider_name)
+            run_id = sb.start_run(provider_name)
         except Exception as exc:
             print(f'[WARN] Could not log Supabase run start: {exc}')
 
@@ -40,20 +60,40 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             (feat['history_n'] >= model['min_history_days']) &
             feat['sector'].notna()
         )
-        scored = build_scores(feat.loc[eligible].copy(), cfg)
-        if scored.empty:
+
+        valid_dates, coverage_counts, coverage_reference = _valid_cross_section_dates(feat, eligible, model)
+        if len(valid_dates) == 0:
             diag_cols = [c for c in ['ticker','date','close','volume','value','value_avg_20','history_n','sector'] if c in feat.columns]
             diag = (feat.sort_values('date').groupby('ticker', as_index=False).tail(1)[diag_cols]
                     .sort_values('ticker'))
             print('[ELIGIBILITY DIAGNOSTIC]')
             print(diag.to_string(index=False))
-            raise RuntimeError('No eligible stocks after filters; inspect provider units/coverage.')
+            raise RuntimeError('No sufficiently complete cross-section after filters; inspect provider coverage.')
+
+        # Never rank a partial/intraday cross-section against itself.  Scores,
+        # acceleration and market breadth are calculated only on dates whose
+        # coverage is representative of the recent universe.
+        scoring_mask = eligible & feat['date'].isin(valid_dates)
+        scored = build_scores(feat.loc[scoring_mask].copy(), cfg)
+        if scored.empty:
+            raise RuntimeError('No eligible stocks after cross-section coverage gate.')
         scored = add_stage(scored, cfg)
-        regime = market_regime(feat.loc[eligible].copy(), bench)
+
+        regime = market_regime(feat.loc[scoring_mask].copy(), bench)
+        coverage = coverage_counts.rename('coverage_stocks').reset_index()
+        regime = regime.merge(coverage, on='date', how='left')
+        regime['coverage_reference'] = coverage_reference
 
         latest_date = scored['date'].max()
         latest = scored[scored['date'] == latest_date].copy()
-        reg_latest = regime.sort_values('date').iloc[-1].to_dict() if not regime.empty else {}
+        latest_coverage = int(coverage_counts.get(latest_date, len(latest)))
+        print(
+            f'[COVERAGE] asof={pd.Timestamp(latest_date).date()} '
+            f'stocks={latest_coverage} reference={coverage_reference}'
+        )
+
+        reg_latest = regime[regime['date'] == latest_date]
+        reg_latest = reg_latest.iloc[-1].to_dict() if not reg_latest.empty else {}
 
         out = root / 'outputs'
         out.mkdir(exist_ok=True)
@@ -87,14 +127,14 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             sec_latest = sector_daily[sector_daily['date'] == latest_date].copy()
             sb.sync_sector(sec_latest)
             if not regime.empty:
-                sb.sync_regime(regime[regime['date'] == regime['date'].max()].copy())
-            sb.finish_run(provider_name, latest_date, len(latest), status='SUCCESS')
+                sb.sync_regime(regime[regime['date'] == latest_date].copy())
+            sb.finish_run(run_id, provider_name, latest_date, len(latest), status='SUCCESS')
 
         return latest, regime
     except Exception as exc:
         if sb is not None:
             try:
-                sb.finish_run(provider_name, None, 0, status='FAILED', message=str(exc)[:1000])
+                sb.finish_run(run_id, provider_name, None, 0, status='FAILED', message=str(exc)[:1000])
             except Exception:
                 pass
         raise

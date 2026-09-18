@@ -24,12 +24,14 @@ class VNStockProvider:
         sleep: float | None = None,
         symbols: Iterable[str] | None = None,
         live_max_symbols: int | None = None,
+        sector_level: int = 2,
     ):
         self.source = source
         self.listing_source = listing_source
         self.sleep = sleep
         self.symbols = [str(s).upper() for s in symbols] if symbols else None
         self.live_max_symbols = live_max_symbols
+        self.sector_level = int(sector_level)
 
         try:
             from vnstock import Listing, Market, register_user
@@ -163,12 +165,20 @@ class VNStockProvider:
             exch["exchange"] = exch["exchange"].astype(str).str.upper()
             if not self.symbols:
                 exch = exch[exch["exchange"].isin(["HOSE", "HNX", "UPCOM"])].copy()
+        if "type" in exch.columns:
+            asset_type = exch["type"].astype(str).str.upper()
+            # Exclude ETFs, funds, warrants and other non-equity instruments.
+            exch = exch[asset_type.eq("STOCK")].copy()
 
         ind = self._industry_frame(listing)
         if not ind.empty:
             ind["ticker"] = ind["ticker"].astype(str).str.upper()
             if "icb_level" in ind.columns:
-                ind = ind.sort_values(["ticker", "icb_level"]).groupby("ticker").tail(1)
+                level = pd.to_numeric(ind["icb_level"], errors="coerce")
+                chosen = ind[level.eq(self.sector_level)].copy()
+                if chosen.empty:
+                    chosen = ind.sort_values(["ticker", "icb_level"]).groupby("ticker").tail(1)
+                ind = chosen
             sector_col = next((c for c in ["icb_name", "industry", "industry_name", "sector"] if c in ind.columns), None)
             if sector_col:
                 ind = ind[["ticker", sector_col]].rename(columns={sector_col: "sector"}).drop_duplicates("ticker")

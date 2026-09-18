@@ -41,6 +41,7 @@ def main():
         provider = VNStockProvider(
             symbols=symbols,
             live_max_symbols=None if symbols else int(cfg['model'].get('live_max_symbols', 450)),
+            sector_level=int(cfg['model'].get('sector_level', 2)),
         )
     else:
         provider = CSVProvider(ROOT / args.csv_folder)
