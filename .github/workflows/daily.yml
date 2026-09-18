@@ -35,7 +35,7 @@ jobs:
       - run: pytest -q
 
   smoke-live:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && !contains(github.event.head_commit.message, '[run-full]')
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -60,7 +60,7 @@ jobs:
             outputs/market_regime.csv
 
   daily:
-    if: github.event_name != 'push'
+    if: github.event_name != 'push' || contains(github.event.head_commit.message, '[run-full]')
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 55
@@ -68,8 +68,14 @@ jobs:
       VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      VNSTOCK_TELEMETRY: off
     steps:
       - uses: actions/checkout@v4
+      - name: Validate production secrets
+        run: |
+          test -n "$VNSTOCK_API_KEY" || (echo 'Missing VNSTOCK_API_KEY' && exit 1)
+          test -n "$SUPABASE_URL" || (echo 'Missing SUPABASE_URL' && exit 1)
+          test -n "$SUPABASE_SERVICE_ROLE_KEY" || (echo 'Missing SUPABASE_SERVICE_ROLE_KEY' && exit 1)
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
