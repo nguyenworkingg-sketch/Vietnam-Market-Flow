@@ -45,6 +45,8 @@ create table if not exists public.mf_market_regime (
   median_ret20 double precision,
   liquidity_ratio double precision,
   regime text,
+  coverage_stocks integer,
+  coverage_reference integer,
   created_at timestamptz not null default now()
 );
 
@@ -65,3 +67,6 @@ alter table public.mf_sector_daily enable row level security;
 alter table public.mf_market_regime enable row level security;
 alter table public.mf_runs enable row level security;
 -- Intentionally no anonymous policies. Server-side jobs should use a service-role secret.
+
+alter table public.mf_market_regime add column if not exists coverage_stocks integer;
+alter table public.mf_market_regime add column if not exists coverage_reference integer;
