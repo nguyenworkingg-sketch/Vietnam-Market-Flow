@@ -102,11 +102,24 @@ Production schema uses:
 - `mf_market_regime`
 - `mf_runs`
 
+## Quantitative validation
+
+Each full production run now also builds a rolling research panel and evaluates the current model at +5D / +20D / +60D using:
+
+- leadership-score deciles,
+- absolute forward return,
+- VNIndex-adjusted alpha,
+- sector-median-adjusted alpha,
+- stage-transition event studies,
+- daily cross-sectional Spearman information coefficient (IC).
+
+Research outputs are written under `outputs/backtest/`. These diagnostics are **not** treated as final evidence because the current live panel starts from today's production universe. A survivorship-bias-safe historical universe, including delisted names and point-in-time liquidity, is required before weights are optimized.
+
 ## Next quantitative milestones
 
 1. Validate live data units and corporate actions.
 2. Historical backfill with delisted / changing-universe handling.
-3. Decile event study for +5D/+20D/+60D market- and sector-adjusted returns.
+3. Validate decile monotonicity, IC and Emerging-stage event alpha across regimes.
 4. Walk-forward / out-of-sample optimization of weights and thresholds.
 5. Add foreign, proprietary, ETF and order-flow features only after the base model earns its keep.
 

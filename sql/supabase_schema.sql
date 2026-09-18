@@ -6,6 +6,8 @@ create table if not exists public.mf_universe (
   exchange text,
   sector text,
   name text,
+  is_active boolean not null default true,
+  last_seen date,
   updated_at timestamptz not null default now()
 );
 
@@ -70,3 +72,6 @@ alter table public.mf_runs enable row level security;
 
 alter table public.mf_market_regime add column if not exists coverage_stocks integer;
 alter table public.mf_market_regime add column if not exists coverage_reference integer;
+
+alter table public.mf_universe add column if not exists is_active boolean not null default true;
+alter table public.mf_universe add column if not exists last_seen date;

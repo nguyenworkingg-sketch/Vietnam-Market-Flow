@@ -4,7 +4,10 @@ model:
   history_start: '2018-01-01'
   # Daily production only needs enough observations for MA200 / 52-week high.
   live_lookback_days: 520
-  live_max_symbols: 450
+  # Scan the full stock universe. The old price-board liquidity prefilter could
+  # degrade to alphabetical selection when board values were unavailable,
+  # which excluded many liquid HOSE names and invalidated cross-sectional ranks.
+  live_max_symbols: 2000
   sector_level: 2            # ICB supersector: broad enough for stable breadth/rotation
   min_price: 3.0              # thousand VND/share
   min_avg_value_20: 10000000000  # 10bn VND/day

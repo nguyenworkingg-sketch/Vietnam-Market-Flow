@@ -29,6 +29,11 @@ def main():
     ensure_dirs(ROOT)
 
     symbols = [s.strip().upper() for s in args.symbols.split(',') if s.strip()] or None
+    if symbols:
+        # CI smoke tests intentionally use a tiny universe. Keep the same
+        # coverage logic but scale its absolute floor to that test universe.
+        cfg['model']['min_cross_section_stocks'] = max(2, int(len(symbols) * 0.70))
+
     if args.start:
         start = args.start
     elif args.full_history:

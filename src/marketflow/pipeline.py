@@ -103,6 +103,26 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             hist.to_parquet(out / 'scores_history.parquet', index=False)
         except Exception:
             hist.to_csv(out / 'scores_history.csv', index=False)
+
+        # Research panel keeps the full price path, including future dates where
+        # a stock may no longer pass today's liquidity filter.  Scores are
+        # merged only where the stock was investable and the date passed the
+        # cross-section coverage gate.  This avoids forward-return lookups
+        # disappearing simply because future eligibility changed.
+        panel_cols = [c for c in [
+            'date','ticker','sector','exchange','open','high','low','close','volume','value',
+            'value_avg_20','benchmark_close','ret_1','ret_20','ret_60'
+        ] if c in feat.columns]
+        panel = feat[panel_cols].copy()
+        panel['is_eligible'] = eligible.astype(bool).values
+        panel['valid_cross_section'] = feat['date'].isin(valid_dates).values
+        score_cols = ['date','ticker','leadership_score','acceleration','rs_score','flow_score','trend_score','sector_score','stage']
+        panel = panel.merge(scored[score_cols], on=['date','ticker'], how='left')
+        try:
+            panel.to_parquet(out / 'research_panel.parquet', index=False)
+        except Exception:
+            panel.to_csv(out / 'research_panel.csv', index=False)
+
         regime.to_csv(out / 'market_regime.csv', index=False)
         render_dashboard(latest, reg_latest, out / 'dashboard.html')
         docs = root / 'docs'
@@ -122,12 +142,17 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         db.write_table('sector_daily', sector_daily)
 
         if sb is not None:
-            sb.sync_universe(universe)
+            sb.sync_universe(universe, as_of_date=latest_date)
             sb.sync_scores(latest)
             sec_latest = sector_daily[sector_daily['date'] == latest_date].copy()
             sb.sync_sector(sec_latest)
             if not regime.empty:
                 sb.sync_regime(regime[regime['date'] == latest_date].copy())
+            sb.prune_completed_snapshot(
+                latest_date,
+                tickers=latest['ticker'].astype(str).tolist(),
+                sectors=sec_latest['sector'].astype(str).tolist(),
+            )
             sb.finish_run(run_id, provider_name, latest_date, len(latest), status='SUCCESS')
 
         return latest, regime

@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime
 from urllib import request, error
+from urllib.parse import urlencode
 
 import numpy as np
 import pandas as pd
@@ -105,6 +106,20 @@ class SupabaseRESTStore:
             body = e.read().decode('utf-8', errors='replace')
             raise RuntimeError(f'Supabase patch failed table={table} status={e.code}: {body}') from e
 
+    def _delete_where(self, table: str, params: dict[str, str]) -> None:
+        endpoint = f'{self.url}/rest/v1/{table}?' + urlencode(params, safe='(),.*')
+        req = request.Request(
+            endpoint,
+            headers=self._headers('return=minimal'),
+            method='DELETE',
+        )
+        try:
+            with request.urlopen(req, timeout=60) as r:
+                r.read()
+        except error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')
+            raise RuntimeError(f'Supabase delete failed table={table} status={e.code}: {body}') from e
+
     def _batch_post(self, table: str, rows: list[dict], on_conflict: str | None = None):
         for i in range(0, len(rows), self.batch_size):
             self._post(table, rows[i:i+self.batch_size], on_conflict=on_conflict)
@@ -141,11 +156,18 @@ class SupabaseRESTStore:
         else:
             self._patch('mf_runs', f'run_id=eq.{int(run_id)}', values)
 
-    def sync_universe(self, universe: pd.DataFrame) -> None:
+    def sync_universe(self, universe: pd.DataFrame, as_of_date=None) -> None:
         cols = [c for c in ['ticker', 'exchange', 'sector', 'name'] if c in universe.columns]
         x = universe[cols].copy()
         if 'name' not in x.columns and 'organ_name' in universe.columns:
             x['name'] = universe['organ_name']
+        seen = pd.Timestamp(as_of_date).date() if as_of_date is not None else pd.Timestamp.now(tz='Asia/Ho_Chi_Minh').date()
+        # Current production universe is a snapshot, so explicitly deactivate
+        # prior rows first; this prevents old ETFs/derivatives from remaining
+        # "active" after universe rules change.
+        self._patch('mf_universe', 'is_active=eq.true', {'is_active': False})
+        x['is_active'] = True
+        x['last_seen'] = seen
         rows = _records(x.drop_duplicates('ticker'))
         self._batch_post('mf_universe', rows, on_conflict='ticker')
 
@@ -160,6 +182,29 @@ class SupabaseRESTStore:
         x = sector_daily[[c for c in cols if c in sector_daily.columns]].copy()
         rows = _records(x, rename={'date':'trade_date'})
         self._batch_post('mf_sector_daily', rows, on_conflict='trade_date,sector')
+
+    def prune_completed_snapshot(self, latest_trade_date, tickers: list[str], sectors: list[str]) -> None:
+        dt = pd.Timestamp(latest_trade_date).date().isoformat()
+
+        # Any later date is, by definition, an incomplete snapshot if the
+        # coverage-gated engine selected an earlier authoritative as-of date.
+        for table in ['mf_scores_daily', 'mf_sector_daily', 'mf_market_regime']:
+            self._delete_where(table, {'trade_date': f'gt.{dt}'})
+
+        if tickers:
+            ticker_filter = 'not.in.(' + ','.join(sorted(set(map(str, tickers)))) + ')'
+            self._delete_where(
+                'mf_scores_daily',
+                {'trade_date': f'eq.{dt}', 'ticker': ticker_filter},
+            )
+        if sectors:
+            # Quote individual sector strings in the PostgREST in-list grammar.
+            safe_sectors = [str(s).replace('"', '') for s in sorted(set(sectors))]
+            sector_filter = 'not.in.(' + ','.join(f'"{s}"' for s in safe_sectors) + ')'
+            self._delete_where(
+                'mf_sector_daily',
+                {'trade_date': f'eq.{dt}', 'sector': sector_filter},
+            )
 
     def sync_regime(self, regime: pd.DataFrame) -> None:
         cols = ['date','market_score','breadth_ma20','breadth_ma50','median_ret20','liquidity_ratio','regime','coverage_stocks','coverage_reference']

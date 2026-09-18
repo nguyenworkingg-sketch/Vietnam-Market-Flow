@@ -6,3 +6,9 @@ __pycache__/
 data/*.duckdb
 data/*.sqlite
 sample_data/
+
+# Large rolling research datasets are rebuilt by Actions; do not bloat Git history.
+outputs/research_panel.parquet
+outputs/research_panel.csv
+outputs/scores_history.parquet
+outputs/scores_history.csv
