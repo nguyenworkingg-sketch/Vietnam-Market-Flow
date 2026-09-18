@@ -23,7 +23,7 @@ def render_dashboard(latest: pd.DataFrame, regime_latest: dict, out_path: str | 
     dt = str(pd.to_datetime(latest['date'].max()).date())
     css = """
     body{font-family:Inter,Arial,sans-serif;background:#0b1020;color:#e8ecf3;margin:0;padding:28px}
-    h1,h2{margin:0 0 12px}.muted{color:#8d99ae}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0}
+    h1,h2{margin:0 0 12px}.muted{color:#8d99ae}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0}
     .card{background:#121a2f;border:1px solid #26314d;border-radius:14px;padding:18px}.big{font-size:34px;font-weight:700}
     .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#1c2948}.section{margin-top:24px}
     table.data{width:100%;border-collapse:collapse;background:#121a2f;border-radius:12px;overflow:hidden}
@@ -37,6 +37,7 @@ def render_dashboard(latest: pd.DataFrame, regime_latest: dict, out_path: str | 
       <div class='card'><div class='muted'>Market regime</div><div class='big'>{html.escape(str(regime_latest.get('regime','NA')))}</div></div>
       <div class='card'><div class='muted'>Market score</div><div class='big'>{regime_latest.get('market_score', float('nan')):.1f}</div></div>
       <div class='card'><div class='muted'>Breadth &gt; MA20</div><div class='big'>{100*regime_latest.get('breadth_ma20', float('nan')):.1f}%</div></div>
+      <div class='card'><div class='muted'>Coverage</div><div class='big'>{int(regime_latest.get('coverage_stocks', 0))}/{int(regime_latest.get('coverage_reference', 0))}</div></div>
     </div>
     <div class='section'><h2>Sector rotation</h2>{_table(sectors,['sector','sector_score','acceleration','members'],20)}</div>
     <div class='two section'><div><h2>Top leaders</h2>{_table(leaders,['ticker','sector','leadership_score','acceleration','rs_score','flow_score','trend_score','stage'],20)}</div>
