@@ -58,6 +58,7 @@ jobs:
             outputs/dashboard.html
             outputs/scores_latest.csv
             outputs/market_regime.csv
+            outputs/backtest/
 
   daily:
     if: github.event_name != 'push' || contains(github.event.head_commit.message, '[run-full]')
@@ -83,6 +84,8 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Build daily signals
         run: python scripts/run_daily.py --provider vnstock
+      - name: Run rolling research diagnostics
+        run: python scripts/run_backtest.py
       - name: Commit dashboard outputs
         run: |
           git config user.name 'market-flow-bot'
