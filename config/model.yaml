@@ -10,6 +10,9 @@ model:
   min_avg_value_20: 10000000000  # 10bn VND/day
   min_history_days: 130
   acceleration_window: 5
+  coverage_reference_days: 30
+  min_cross_section_coverage: 0.70
+  min_cross_section_stocks: 50
 
 weights:
   relative_strength:
