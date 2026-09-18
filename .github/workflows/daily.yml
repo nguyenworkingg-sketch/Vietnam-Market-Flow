@@ -63,7 +63,7 @@ jobs:
     if: github.event_name != 'push' || contains(github.event.head_commit.message, '[run-full]')
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 75
     env:
       VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
