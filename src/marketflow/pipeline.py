@@ -142,12 +142,17 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         db.write_table('sector_daily', sector_daily)
 
         if sb is not None:
-            sb.sync_universe(universe)
+            sb.sync_universe(universe, as_of_date=latest_date)
             sb.sync_scores(latest)
             sec_latest = sector_daily[sector_daily['date'] == latest_date].copy()
             sb.sync_sector(sec_latest)
             if not regime.empty:
                 sb.sync_regime(regime[regime['date'] == latest_date].copy())
+            sb.prune_completed_snapshot(
+                latest_date,
+                tickers=latest['ticker'].astype(str).tolist(),
+                sectors=sec_latest['sector'].astype(str).tolist(),
+            )
             sb.finish_run(run_id, provider_name, latest_date, len(latest), status='SUCCESS')
 
         return latest, regime
