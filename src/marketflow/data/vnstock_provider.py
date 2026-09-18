@@ -62,14 +62,21 @@ class VNStockProvider:
         else:
             x[price_cols] = x[price_cols].apply(pd.to_numeric, errors="coerce")
         x["volume"] = pd.to_numeric(x["volume"], errors="coerce")
+        implied = x["close"] * 1000.0 * x["volume"]
         if "value" not in x.columns:
-            x["value"] = x["close"] * 1000.0 * x["volume"]
+            x["value"] = implied
         else:
             x["value"] = pd.to_numeric(x["value"], errors="coerce")
-            implied = x["close"] * 1000.0 * x["volume"]
-            ratio = (x["value"] / implied.replace(0, np.nan)).median()
-            if pd.notna(ratio) and ratio < 0.1:
-                x["value"] = x["value"] * 1000.0
+            ratio = (x["value"] / implied.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).median()
+            # Providers commonly expose trading value in VND, thousand VND,
+            # million VND or billion VND. Infer the scale against Px*Volume.
+            if pd.notna(ratio) and ratio > 0:
+                candidates = [1.0, 1e3, 1e6, 1e9]
+                mult = min(candidates, key=lambda m: abs(np.log10(ratio * m)))
+                x["value"] = x["value"] * mult
+            # If value is missing for some rows, canonical reconstruction is
+            # preferable to dropping otherwise valid OHLCV observations.
+            x["value"] = x["value"].fillna(implied)
         return x
 
     def _listing_obj(self):
