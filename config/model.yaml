@@ -1,0 +1,50 @@
+model:
+  benchmark: VNINDEX
+  # Full historical start is for explicit backtests/backfills.
+  history_start: '2018-01-01'
+  # Daily production only needs enough observations for MA200 / 52-week high.
+  live_lookback_days: 520
+  live_max_symbols: 450
+  min_price: 3.0              # thousand VND/share
+  min_avg_value_20: 10000000000  # 10bn VND/day
+  min_history_days: 130
+  acceleration_window: 5
+
+weights:
+  relative_strength:
+    rs_5: 0.15
+    rs_20: 0.30
+    rs_60: 0.35
+    rs_sector_20: 0.20
+  flow:
+    value_ratio_20: 0.35
+    volume_ratio_20: 0.25
+    turnover_proxy_accel_20: 0.20
+    up_volume_share_20: 0.20
+  trend:
+    ma20_distance: 0.20
+    ma50_distance: 0.15
+    ma20_slope_5: 0.20
+    ma50_slope_10: 0.15
+    high_252_proximity: 0.15
+    positive_day_share_20: 0.10
+    volatility_20: -0.05
+  sector:
+    sector_rs_20: 0.30
+    sector_rs_60: 0.25
+    breadth_ma20: 0.20
+    breadth_ma50: 0.10
+    sector_value_ratio_20: 0.15
+  leadership:
+    rs_score: 0.35
+    flow_score: 0.25
+    trend_score: 0.20
+    sector_score: 0.20
+
+stages:
+  leader_score: 85
+  mature_score: 90
+  emerging_min_score: 65
+  emerging_acceleration: 10
+  fading_acceleration: -10
+  fading_score: 60
