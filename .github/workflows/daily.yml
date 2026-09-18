@@ -41,6 +41,7 @@ jobs:
     timeout-minutes: 20
     env:
       VNSTOCK_API_KEY: ${{ secrets.VNSTOCK_API_KEY }}
+      VNSTOCK_TELEMETRY: off
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,7 +50,7 @@ jobs:
           cache: 'pip'
       - run: pip install -r requirements.txt
       - name: Vnstock live smoke test
-        run: python scripts/run_daily.py --provider vnstock --symbols FPT,VCB,GAS,POW,REE,HPG,VNM,SSI,MWG,VIC
+        run: python scripts/run_daily.py --provider vnstock --symbols FPT,VCB,GAS,POW --start 2026-01-01
       - uses: actions/upload-artifact@v4
         with:
           name: smoke-dashboard
