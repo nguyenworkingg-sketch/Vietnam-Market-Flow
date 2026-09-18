@@ -58,7 +58,6 @@ jobs:
             outputs/dashboard.html
             outputs/scores_latest.csv
             outputs/market_regime.csv
-            outputs/backtest/
 
   daily:
     if: github.event_name != 'push' || contains(github.event.head_commit.message, '[run-full]')
@@ -100,3 +99,4 @@ jobs:
             outputs/dashboard.html
             outputs/scores_latest.csv
             outputs/market_regime.csv
+            outputs/backtest/
