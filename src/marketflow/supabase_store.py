@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+import json
+import math
+import os
+from dataclasses import dataclass
+from urllib import request, error
+
+import numpy as np
+import pandas as pd
+
+
+def _clean_value(v):
+    if v is None:
+        return None
+    if isinstance(v, (pd.Timestamp,)):
+        return v.isoformat()
+    if isinstance(v, np.datetime64):
+        return pd.Timestamp(v).isoformat()
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (np.floating, float)):
+        x = float(v)
+        return None if math.isnan(x) or math.isinf(x) else x
+    if pd.isna(v):
+        return None
+    return v
+
+
+def _records(df: pd.DataFrame, rename: dict[str, str] | None = None) -> list[dict]:
+    x = df.copy()
+    if rename:
+        x = x.rename(columns=rename)
+    return [{k: _clean_value(v) for k, v in row.items()} for row in x.to_dict('records')]
+
+
+@dataclass
+class SupabaseRESTStore:
+    url: str
+    key: str
+    batch_size: int = 500
+
+    @classmethod
+    def from_env(cls) -> "SupabaseRESTStore | None":
+        url = os.getenv('SUPABASE_URL', '').strip().rstrip('/')
+        key = os.getenv('SUPABASE_SERVICE_ROLE_KEY', '').strip()
+        if not url or not key:
+            return None
+        return cls(url=url, key=key)
+
+    def _headers(self, prefer: str | None = None) -> dict[str, str]:
+        h = {
+            'apikey': self.key,
+            'Authorization': f'Bearer {self.key}',
+            'Content-Type': 'application/json',
+        }
+        if prefer:
+            h['Prefer'] = prefer
+        return h
+
+    def _post(self, table: str, rows: list[dict], on_conflict: str | None = None):
+        if not rows:
+            return
+        endpoint = f'{self.url}/rest/v1/{table}'
+        if on_conflict:
+            endpoint += f'?on_conflict={on_conflict}'
+        payload = json.dumps(rows, ensure_ascii=False).encode('utf-8')
+        req = request.Request(
+            endpoint,
+            data=payload,
+            headers=self._headers('resolution=merge-duplicates,return=minimal'),
+            method='POST',
+        )
+        try:
+            with request.urlopen(req, timeout=60) as r:
+                r.read()
+        except error.HTTPError as e:
+            body = e.read().decode('utf-8', errors='replace')
+            raise RuntimeError(f'Supabase write failed table={table} status={e.code}: {body}') from e
+
+    def _batch_post(self, table: str, rows: list[dict], on_conflict: str | None = None):
+        for i in range(0, len(rows), self.batch_size):
+            self._post(table, rows[i:i+self.batch_size], on_conflict=on_conflict)
+
+    def start_run(self, provider: str) -> None:
+        self._post('mf_runs', [{'status': 'RUNNING', 'provider': provider}])
+
+    def finish_run(self, provider: str, latest_trade_date, eligible_stocks: int, status: str = 'SUCCESS', message: str | None = None) -> None:
+        self._post('mf_runs', [{
+            'status': status,
+            'provider': provider,
+            'latest_trade_date': _clean_value(pd.Timestamp(latest_trade_date).date()) if latest_trade_date is not None else None,
+            'eligible_stocks': int(eligible_stocks),
+            'message': message,
+            'finished_at': pd.Timestamp.utcnow().isoformat(),
+        }])
+
+    def sync_universe(self, universe: pd.DataFrame) -> None:
+        cols = [c for c in ['ticker', 'exchange', 'sector', 'name'] if c in universe.columns]
+        x = universe[cols].copy()
+        if 'name' not in x.columns and 'organ_name' in universe.columns:
+            x['name'] = universe['organ_name']
+        rows = _records(x.drop_duplicates('ticker'))
+        self._batch_post('mf_universe', rows, on_conflict='ticker')
+
+    def sync_scores(self, scored: pd.DataFrame) -> None:
+        cols = ['date','ticker','sector','rs_score','flow_score','trend_score','sector_score','leadership_score','acceleration','stage']
+        x = scored[[c for c in cols if c in scored.columns]].copy()
+        rows = _records(x, rename={'date':'trade_date'})
+        self._batch_post('mf_scores_daily', rows, on_conflict='trade_date,ticker')
+
+    def sync_sector(self, sector_daily: pd.DataFrame) -> None:
+        cols = ['date','sector','sector_score','acceleration','breadth_ma20','breadth_ma50']
+        x = sector_daily[[c for c in cols if c in sector_daily.columns]].copy()
+        rows = _records(x, rename={'date':'trade_date'})
+        self._batch_post('mf_sector_daily', rows, on_conflict='trade_date,sector')
+
+    def sync_regime(self, regime: pd.DataFrame) -> None:
+        cols = ['date','market_score','breadth_ma20','breadth_ma50','median_ret20','liquidity_ratio','regime']
+        x = regime[[c for c in cols if c in regime.columns]].copy()
+        rows = _records(x, rename={'date':'trade_date'})
+        self._batch_post('mf_market_regime', rows, on_conflict='trade_date')
