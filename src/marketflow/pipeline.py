@@ -42,6 +42,11 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         )
         scored = build_scores(feat.loc[eligible].copy(), cfg)
         if scored.empty:
+            diag_cols = [c for c in ['ticker','date','close','volume','value','value_avg_20','history_n','sector'] if c in feat.columns]
+            diag = (feat.sort_values('date').groupby('ticker', as_index=False).tail(1)[diag_cols]
+                    .sort_values('ticker'))
+            print('[ELIGIBILITY DIAGNOSTIC]')
+            print(diag.to_string(index=False))
             raise RuntimeError('No eligible stocks after filters; inspect provider units/coverage.')
         scored = add_stage(scored, cfg)
         regime = market_regime(feat.loc[eligible].copy(), bench)
