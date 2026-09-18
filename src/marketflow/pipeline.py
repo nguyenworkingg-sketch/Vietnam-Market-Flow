@@ -16,9 +16,10 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
     model = cfg['model']
     start = history_start or model['history_start']
     sb = SupabaseRESTStore.from_env()
+    run_id = None
     if sb is not None:
         try:
-            sb.start_run(provider_name)
+            run_id = sb.start_run(provider_name)
         except Exception as exc:
             print(f'[WARN] Could not log Supabase run start: {exc}')
 
@@ -88,13 +89,13 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             sb.sync_sector(sec_latest)
             if not regime.empty:
                 sb.sync_regime(regime[regime['date'] == regime['date'].max()].copy())
-            sb.finish_run(provider_name, latest_date, len(latest), status='SUCCESS')
+            sb.finish_run(run_id, provider_name, latest_date, len(latest), status='SUCCESS')
 
         return latest, regime
     except Exception as exc:
         if sb is not None:
             try:
-                sb.finish_run(provider_name, None, 0, status='FAILED', message=str(exc)[:1000])
+                sb.finish_run(run_id, provider_name, None, 0, status='FAILED', message=str(exc)[:1000])
             except Exception:
                 pass
         raise
