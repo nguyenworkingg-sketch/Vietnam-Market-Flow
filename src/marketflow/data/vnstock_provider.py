@@ -194,12 +194,12 @@ class VNStockProvider:
         market = self.Market()
         domain = getattr(market, kind)
         end_value = end or pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").date().isoformat()
-        kwargs = {"symbol": symbol, "start": start, "end": end_value}
+        kwargs = {"symbol": symbol, "start": start, "end": end_value, "count": 5000}
         try:
             df = domain.ohlcv(**kwargs)
         except (TypeError, AttributeError):
             obj = domain(symbol) if callable(domain) else domain
-            kwargs2 = {"start": start, "end": end_value}
+            kwargs2 = {"start": start, "end": end_value, "count": 5000}
             try:
                 df = obj.ohlcv(**kwargs2)
             except TypeError:
@@ -210,7 +210,7 @@ class VNStockProvider:
             df = df.rename(columns={"time": "date"})
         if "date" not in df.columns:
             raise ValueError(f"No date/time column returned for {symbol}")
-        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None).dt.normalize()
         return df
 
     def _price_board(self, symbols: list[str]) -> pd.DataFrame:
