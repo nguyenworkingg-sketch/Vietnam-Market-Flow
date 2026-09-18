@@ -16,8 +16,10 @@ permissions:
   contents: write
 
 concurrency:
-  group: daily-market-flow
-  cancel-in-progress: false
+  group: daily-market-flow-${{ github.ref }}
+  # During development this prevents dozens of obsolete push smoke runs from
+  # blocking the newest code. Daily output commits are path-ignored.
+  cancel-in-progress: true
 
 jobs:
   test:
