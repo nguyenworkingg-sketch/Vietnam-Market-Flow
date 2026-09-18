@@ -130,6 +130,17 @@ class VNStockProvider:
         return pd.DataFrame(columns=["ticker", "sector"])
 
     def get_universe(self) -> pd.DataFrame:
+        # Explicit-symbol mode is used by CI to validate the live OHLCV path.
+        # Avoid listing/industry endpoints here so Guest mode stays below its
+        # documented request ceiling.
+        if self.symbols:
+            return pd.DataFrame({
+                "ticker": self.symbols,
+                "exchange": ["SMOKE"] * len(self.symbols),
+                "sector": ["Smoke Universe"] * len(self.symbols),
+                "name": self.symbols,
+            })
+
         listing = self._listing_obj()
         exch = self._all_exchange_symbols(listing)
         if exch.empty and self.symbols:
