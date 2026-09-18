@@ -45,7 +45,11 @@ class VNStockProvider:
         # Historical OHLCV requests can consume more than one upstream call.
         # Pace proactively so vnstock's limiter never terminates the process.
         if self.sleep is None:
-            self.sleep = 2.6 if api_key else 7.0
+            # Community currently allows 60 requests/minute. Provider calls
+            # themselves take material network time, so a 1.1s client-side
+            # pause remains comfortably below the documented ceiling while
+            # avoiding a ~30 minute full refresh. Guest mode stays conservative.
+            self.sleep = 1.1 if api_key else 7.0
         if api_key:
             try:
                 register_user(api_key=api_key)
