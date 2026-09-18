@@ -132,10 +132,15 @@ class VNStockProvider:
     def get_universe(self) -> pd.DataFrame:
         listing = self._listing_obj()
         exch = self._all_exchange_symbols(listing)
+        if exch.empty and self.symbols:
+            # Smoke/debug mode must not depend on the listing endpoint being
+            # available. Production still requires a valid listing universe.
+            exch = pd.DataFrame({"ticker": self.symbols, "exchange": "UNKNOWN"})
         exch["ticker"] = exch["ticker"].astype(str).str.upper()
         if "exchange" in exch.columns:
             exch["exchange"] = exch["exchange"].astype(str).str.upper()
-            exch = exch[exch["exchange"].isin(["HOSE", "HNX", "UPCOM"])].copy()
+            if not self.symbols:
+                exch = exch[exch["exchange"].isin(["HOSE", "HNX", "UPCOM"])].copy()
 
         ind = self._industry_frame(listing)
         if not ind.empty:
@@ -152,6 +157,13 @@ class VNStockProvider:
 
         if self.symbols:
             exch = exch[exch["ticker"].isin(self.symbols)].copy()
+            present = set(exch["ticker"].astype(str))
+            missing = [s for s in self.symbols if s not in present]
+            if missing:
+                exch = pd.concat(
+                    [exch, pd.DataFrame({"ticker": missing, "exchange": "UNKNOWN", "sector": "Chưa phân ngành"})],
+                    ignore_index=True,
+                )
         if "organ_name" in exch.columns and "name" not in exch.columns:
             exch = exch.rename(columns={"organ_name": "name"})
         return exch.drop_duplicates("ticker").reset_index(drop=True)
@@ -236,8 +248,11 @@ class VNStockProvider:
         return pd.concat(frames, ignore_index=True)
 
     def get_prices(self, start: str, end: str | None = None) -> pd.DataFrame:
-        universe = self.get_universe()
-        symbols = self._select_live_symbols(universe)
+        if self.symbols:
+            symbols = self.symbols
+        else:
+            universe = self.get_universe()
+            symbols = self._select_live_symbols(universe)
         return self.get_prices_for_symbols(symbols, start, end)
 
     def get_benchmark(self, symbol: str, start: str, end: str | None = None) -> pd.DataFrame:
