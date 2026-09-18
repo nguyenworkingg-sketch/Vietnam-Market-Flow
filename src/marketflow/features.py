@@ -14,7 +14,7 @@ def add_stock_features(prices: pd.DataFrame, benchmark: pd.DataFrame) -> pd.Data
     b = b[['date', 'close']].rename(columns={'close': 'benchmark_close'})
     for w in [5, 20, 60, 120]:
         b[f'benchmark_ret_{w}'] = b['benchmark_close'].pct_change(w)
-    p = p.merge(b.drop(columns=['benchmark_close']), on='date', how='left')
+    p = p.merge(b, on='date', how='left')
 
     g = p.groupby('ticker', group_keys=False)
     p['ret_1'] = g['close'].pct_change()
