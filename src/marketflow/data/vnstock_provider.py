@@ -159,50 +159,69 @@ class VNStockProvider:
             })
 
         listing = self._listing_obj()
-        exch = self._all_exchange_symbols(listing)
-        if exch.empty and self.symbols:
-            # Smoke/debug mode must not depend on the listing endpoint being
-            # available. Production still requires a valid listing universe.
-            exch = pd.DataFrame({"ticker": self.symbols, "exchange": "UNKNOWN"})
-        exch["ticker"] = exch["ticker"].astype(str).str.upper()
-        if "exchange" in exch.columns:
-            exch["exchange"] = exch["exchange"].astype(str).str.upper()
-            if not self.symbols:
-                exch = exch[exch["exchange"].isin(["HOSE", "HNX", "UPCOM"])].copy()
-        if "type" in exch.columns:
-            asset_type = exch["type"].astype(str).str.upper()
-            # Exclude ETFs, funds, warrants and other non-equity instruments.
-            exch = exch[asset_type.eq("STOCK")].copy()
 
+        # VCI's industry/company endpoint is the more stable source of the
+        # equity universe and ICB hierarchy.  Do NOT make symbols_by_exchange
+        # the left-hand table: some provider responses can omit HOSE names,
+        # which previously removed large liquid stocks such as FPT/VCB/HPG
+        # before scoring even started.
         ind = self._industry_frame(listing)
-        if not ind.empty:
-            ind["ticker"] = ind["ticker"].astype(str).str.upper()
-            if "icb_level" in ind.columns:
-                level = pd.to_numeric(ind["icb_level"], errors="coerce")
-                chosen = ind[level.eq(self.sector_level)].copy()
-                if chosen.empty:
-                    chosen = ind.sort_values(["ticker", "icb_level"]).groupby("ticker").tail(1)
-                ind = chosen
-            sector_col = next((c for c in ["icb_name", "industry", "industry_name", "sector"] if c in ind.columns), None)
-            if sector_col:
-                ind = ind[["ticker", sector_col]].rename(columns={sector_col: "sector"}).drop_duplicates("ticker")
-                exch = exch.merge(ind, on="ticker", how="left")
-        if "sector" not in exch.columns:
-            exch["sector"] = "Chưa phân ngành"
-        exch["sector"] = exch["sector"].fillna("Chưa phân ngành")
+        if ind.empty:
+            raise RuntimeError("Industry/company listing is empty; cannot build a reliable equity universe.")
 
-        if self.symbols:
-            exch = exch[exch["ticker"].isin(self.symbols)].copy()
-            present = set(exch["ticker"].astype(str))
-            missing = [s for s in self.symbols if s not in present]
-            if missing:
-                exch = pd.concat(
-                    [exch, pd.DataFrame({"ticker": missing, "exchange": "UNKNOWN", "sector": "Chưa phân ngành"})],
-                    ignore_index=True,
-                )
-        if "organ_name" in exch.columns and "name" not in exch.columns:
-            exch = exch.rename(columns={"organ_name": "name"})
-        return exch.drop_duplicates("ticker").reset_index(drop=True)
+        ind["ticker"] = ind["ticker"].astype(str).str.upper()
+        if "icb_level" in ind.columns:
+            level = pd.to_numeric(ind["icb_level"], errors="coerce")
+            chosen = ind[level.eq(self.sector_level)].copy()
+            if chosen.empty:
+                chosen = ind.sort_values(["ticker", "icb_level"]).groupby("ticker").tail(1)
+            ind = chosen
+
+        sector_col = next(
+            (col for col in ["icb_name", "industry", "industry_name", "sector"] if col in ind.columns),
+            None,
+        )
+        if sector_col is None:
+            raise RuntimeError("Industry listing has no recognizable sector column.")
+
+        keep = ["ticker", sector_col]
+        if "organ_name" in ind.columns:
+            keep.append("organ_name")
+        universe = ind[keep].copy().rename(columns={sector_col: "sector"})
+        universe = universe.drop_duplicates("ticker")
+
+        # Exchange is metadata only. Merge it when available, but never let an
+        # incomplete exchange endpoint delete an otherwise valid equity name.
+        try:
+            exch = self._all_exchange_symbols(listing)
+            if not exch.empty:
+                exch["ticker"] = exch["ticker"].astype(str).str.upper()
+                cols = ["ticker"]
+                if "exchange" in exch.columns:
+                    exch["exchange"] = exch["exchange"].astype(str).str.upper()
+                    cols.append("exchange")
+                if "type" in exch.columns:
+                    cols.append("type")
+                exch = exch[cols].drop_duplicates("ticker")
+                universe = universe.merge(exch, on="ticker", how="left")
+                if "type" in universe.columns:
+                    asset_type = universe["type"].fillna("STOCK").astype(str).str.upper()
+                    universe = universe[asset_type.eq("STOCK")].copy()
+        except Exception as exc:
+            print(f"[WARN] Exchange metadata unavailable; continuing from industry universe: {exc}")
+
+        if "sector" not in universe.columns:
+            universe["sector"] = "Chưa phân ngành"
+        universe["sector"] = universe["sector"].fillna("Chưa phân ngành")
+        if "exchange" not in universe.columns:
+            universe["exchange"] = "UNKNOWN"
+        universe["exchange"] = universe["exchange"].fillna("UNKNOWN")
+        if "organ_name" in universe.columns:
+            universe = universe.rename(columns={"organ_name": "name"})
+        if "name" not in universe.columns:
+            universe["name"] = universe["ticker"]
+
+        return universe.drop_duplicates("ticker").reset_index(drop=True)
 
     def _ohlcv(self, kind: str, symbol: str, start: str, end: str | None) -> pd.DataFrame:
         market = self.Market()
