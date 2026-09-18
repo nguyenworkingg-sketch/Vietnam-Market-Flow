@@ -162,7 +162,7 @@ class SupabaseRESTStore:
         self._batch_post('mf_sector_daily', rows, on_conflict='trade_date,sector')
 
     def sync_regime(self, regime: pd.DataFrame) -> None:
-        cols = ['date','market_score','breadth_ma20','breadth_ma50','median_ret20','liquidity_ratio','regime']
+        cols = ['date','market_score','breadth_ma20','breadth_ma50','median_ret20','liquidity_ratio','regime','coverage_stocks','coverage_reference']
         x = regime[[c for c in cols if c in regime.columns]].copy()
         rows = _records(x, rename={'date':'trade_date'})
         self._batch_post('mf_market_regime', rows, on_conflict='trade_date')
