@@ -36,14 +36,18 @@ def test_universe_filters_non_stocks_and_uses_configured_icb_level():
         'type': ['STOCK', 'STOCK', 'ETF'],
     })
     p._industry_frame = lambda listing: pd.DataFrame({
-        'ticker': ['AAA', 'AAA', 'BBB', 'BBB'],
-        'icb_level': [2, 4, 2, 4],
-        'icb_name': ['Ngân hàng', 'Ngân hàng thương mại', 'Điện', 'Sản xuất điện'],
+        'ticker': ['AAA', 'AAA', 'BBB', 'BBB', 'CCC', 'CCC'],
+        'icb_level': [2, 4, 2, 4, 2, 4],
+        'icb_name': ['Ngân hàng', 'Ngân hàng thương mại', 'Điện', 'Sản xuất điện', 'Công nghệ', 'Phần mềm'],
     })
     out = p.get_universe().set_index('ticker')
-    assert set(out.index) == {'AAA', 'BBB'}
+    # CCC exists in the company/industry source even though the exchange
+    # endpoint omitted it; the universe must retain it rather than silently
+    # deleting the name.
+    assert set(out.index) == {'AAA', 'BBB', 'CCC'}
     assert out.loc['AAA', 'sector'] == 'Ngân hàng'
     assert out.loc['BBB', 'sector'] == 'Điện'
+    assert out.loc['CCC', 'sector'] == 'Công nghệ'
 
 
 def test_clean_value_serializes_python_date():
