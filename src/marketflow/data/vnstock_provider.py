@@ -193,22 +193,17 @@ class VNStockProvider:
     def _ohlcv(self, kind: str, symbol: str, start: str, end: str | None) -> pd.DataFrame:
         market = self.Market()
         domain = getattr(market, kind)
-        kwargs = {"symbol": symbol, "start": start}
-        if end:
-            kwargs["end"] = end
+        end_value = end or pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").date().isoformat()
+        kwargs = {"symbol": symbol, "start": start, "end": end_value}
         try:
             df = domain.ohlcv(**kwargs)
         except (TypeError, AttributeError):
             obj = domain(symbol) if callable(domain) else domain
-            kwargs2 = {"start": start}
-            if end:
-                kwargs2["end"] = end
+            kwargs2 = {"start": start, "end": end_value}
             try:
                 df = obj.ohlcv(**kwargs2)
             except TypeError:
-                kwargs3 = {"start_date": start}
-                if end:
-                    kwargs3["end_date"] = end
+                kwargs3 = {"start_date": start, "end_date": end_value}
                 df = obj.ohlcv(**kwargs3)
         df = pd.DataFrame(df).copy()
         if "time" in df.columns:
