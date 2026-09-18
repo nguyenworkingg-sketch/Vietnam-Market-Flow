@@ -21,7 +21,7 @@ class VNStockProvider:
         self,
         source: str = "KBS",
         listing_source: str = "VCI",
-        sleep: float = 0.05,
+        sleep: float | None = None,
         symbols: Iterable[str] | None = None,
         live_max_symbols: int | None = None,
     ):
@@ -40,6 +40,10 @@ class VNStockProvider:
         self.Market = Market
 
         api_key = os.getenv("VNSTOCK_API_KEY", "").strip()
+        # Historical OHLCV requests can consume more than one upstream call.
+        # Pace proactively so vnstock's limiter never terminates the process.
+        if self.sleep is None:
+            self.sleep = 2.6 if api_key else 7.0
         if api_key:
             try:
                 register_user(api_key=api_key)
