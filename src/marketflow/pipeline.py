@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+from pathlib import Path
+import pandas as pd
+
+from .features import add_stock_features, add_sector_features
+from .scoring import build_scores, add_stage
+from .regime import market_regime
+from .storage import DuckStore
+from .dashboard import render_dashboard
+from .supabase_store import SupabaseRESTStore
+
+
+def run(provider, cfg: dict, root: str | Path, history_start: str | None = None, provider_name: str = 'unknown'):
+    root = Path(root)
+    model = cfg['model']
+    start = history_start or model['history_start']
+    sb = SupabaseRESTStore.from_env()
+    if sb is not None:
+        try:
+            sb.start_run(provider_name)
+        except Exception as exc:
+            print(f'[WARN] Could not log Supabase run start: {exc}')
+
+    try:
+        universe = provider.get_universe().copy()
+        universe['ticker'] = universe['ticker'].astype(str).str.upper()
+        prices = provider.get_prices(start)
+        bench = provider.get_benchmark(model['benchmark'], start)
+
+        meta_cols = ['ticker', 'sector'] + (['exchange'] if 'exchange' in universe.columns else [])
+        prices = prices.merge(universe[meta_cols].drop_duplicates('ticker'), on='ticker', how='left')
+        feat = add_stock_features(prices, bench)
+        feat = add_sector_features(feat)
+
+        feat['history_n'] = feat.groupby('ticker').cumcount() + 1
+        eligible = (
+            (feat['close'] >= model['min_price']) &
+            (feat['value_avg_20'] >= model['min_avg_value_20']) &
+            (feat['history_n'] >= model['min_history_days']) &
+            feat['sector'].notna()
+        )
+        scored = build_scores(feat.loc[eligible].copy(), cfg)
+        if scored.empty:
+            raise RuntimeError('No eligible stocks after filters; inspect provider units/coverage.')
+        scored = add_stage(scored, cfg)
+        regime = market_regime(feat.loc[eligible].copy(), bench)
+
+        latest_date = scored['date'].max()
+        latest = scored[scored['date'] == latest_date].copy()
+        reg_latest = regime.sort_values('date').iloc[-1].to_dict() if not regime.empty else {}
+
+        out = root / 'outputs'
+        out.mkdir(exist_ok=True)
+        latest.sort_values('leadership_score', ascending=False).to_csv(out / 'scores_latest.csv', index=False)
+        hist = scored[['date','ticker','sector','leadership_score','acceleration','rs_score','flow_score','trend_score','sector_score','stage']]
+        try:
+            hist.to_parquet(out / 'scores_history.parquet', index=False)
+        except Exception:
+            hist.to_csv(out / 'scores_history.csv', index=False)
+        regime.to_csv(out / 'market_regime.csv', index=False)
+        render_dashboard(latest, reg_latest, out / 'dashboard.html')
+        docs = root / 'docs'
+        docs.mkdir(exist_ok=True)
+        render_dashboard(latest, reg_latest, docs / 'index.html')
+
+        db = DuckStore(root / 'data' / 'market_flow.duckdb')
+        db.write_table('universe', universe)
+        db.write_table('features_scored', scored)
+        db.write_table('market_regime', regime)
+
+        sector_daily = (scored[['date','sector','sector_score','breadth_ma20','breadth_ma50']]
+                        .drop_duplicates(['date','sector'])
+                        .sort_values(['sector','date']))
+        accw = int(model.get('acceleration_window', 5))
+        sector_daily['acceleration'] = sector_daily.groupby('sector')['sector_score'].diff(accw)
+        db.write_table('sector_daily', sector_daily)
+
+        if sb is not None:
+            sb.sync_universe(universe)
+            sb.sync_scores(latest)
+            sec_latest = sector_daily[sector_daily['date'] == latest_date].copy()
+            sb.sync_sector(sec_latest)
+            if not regime.empty:
+                sb.sync_regime(regime[regime['date'] == regime['date'].max()].copy())
+            sb.finish_run(provider_name, latest_date, len(latest), status='SUCCESS')
+
+        return latest, regime
+    except Exception as exc:
+        if sb is not None:
+            try:
+                sb.finish_run(provider_name, None, 0, status='FAILED', message=str(exc)[:1000])
+            except Exception:
+                pass
+        raise
