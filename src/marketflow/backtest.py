@@ -90,7 +90,7 @@ def decile_study(prepared: pd.DataFrame, horizons: Iterable[int] = (5, 20, 60)) 
                     'hit_rate': (g[col] > 0).mean(),
                     'count': len(g),
                 })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=['horizon','metric','decile','mean','median','hit_rate','count'])
 
 
 def stage_entry_study(prepared: pd.DataFrame, horizons: Iterable[int] = (5, 20, 60)) -> pd.DataFrame:
@@ -116,7 +116,7 @@ def stage_entry_study(prepared: pd.DataFrame, horizons: Iterable[int] = (5, 20, 
                     'hit_rate': (g[col] > 0).mean(),
                     'count': len(g),
                 })
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=['horizon','metric','stage','mean','median','hit_rate','count'])
 
 
 def information_coefficient(prepared: pd.DataFrame, horizons: Iterable[int] = (5, 20, 60)) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -134,7 +134,10 @@ def information_coefficient(prepared: pd.DataFrame, horizons: Iterable[int] = (5
                 daily_rows.append({'date': dt, 'horizon': h, 'metric': metric, 'ic': ic, 'n': len(g)})
     daily = pd.DataFrame(daily_rows)
     if daily.empty:
-        return daily, pd.DataFrame()
+        return (
+            pd.DataFrame(columns=['date','horizon','metric','ic','n']),
+            pd.DataFrame(columns=['horizon','metric','mean_ic','median_ic','ic_positive_rate','ic_std','days','ic_ir']),
+        )
     summary = (daily.groupby(['horizon', 'metric'], as_index=False)
                .agg(mean_ic=('ic', 'mean'),
                     median_ic=('ic', 'median'),
