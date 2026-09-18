@@ -83,6 +83,8 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Build daily signals
         run: python scripts/run_daily.py --provider vnstock
+      - name: Validate production data quality
+        run: python scripts/validate_output.py
       - name: Run rolling research diagnostics
         run: python scripts/run_backtest.py
       - name: Commit dashboard outputs
