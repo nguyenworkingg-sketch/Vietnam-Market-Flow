@@ -31,6 +31,8 @@ def build_scores(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     x['rs_score'] = weighted_score(x, w['relative_strength'])
     x['flow_score'] = weighted_score(x, w['flow'])
     x['trend_score'] = weighted_score(x, w['trend'])
+    x['short_momentum_score'] = weighted_score(x, w.get('short_momentum', {}))
+    x['long_momentum_score'] = weighted_score(x, w.get('long_momentum', {}))
 
     sector_cols = ['date', 'sector'] + list(w['sector'].keys())
     sec = x[sector_cols].drop_duplicates(['date', 'sector']).copy()
