@@ -67,6 +67,12 @@ opportunities:
   min_sector_score: 50
   portfolio_size: 10
   portfolio_sector_cap: 2
+  entry_top_n: 3
+  entry_min_sector_score: 50
+  entry_require_macd_positive: true
+  entry_require_ma_bull: true
+  entry_ma_cross_bonus: 4
+  entry_bb_breakout_bonus: 6
 
 stages:
   leader_score: 85
