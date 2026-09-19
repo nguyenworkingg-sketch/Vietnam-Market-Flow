@@ -66,6 +66,154 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
     return d.to_html(index=False, border=0, classes='data', escape=True)
 
 
+
+def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 126, width: int = 1400, height: int = 720) -> str:
+    if price_history is None or price_history.empty:
+        return "<div class='empty'>Chưa có dữ liệu giá cho biểu đồ nến.</div>"
+    required = {'date','ticker','open','high','low','close','volume'}
+    if not required.issubset(price_history.columns):
+        return "<div class='empty'>Thiếu OHLCV để dựng biểu đồ nến.</div>"
+
+    x = price_history[price_history['ticker'].astype(str).eq(str(ticker))].copy()
+    if x.empty:
+        return "<div class='empty'>Chưa có dữ liệu giá cho mã này.</div>"
+    x['date'] = pd.to_datetime(x['date'])
+    x = x.sort_values('date').drop_duplicates('date').tail(days).reset_index(drop=True)
+    for col in ['open','high','low','close','volume']:
+        x[col] = pd.to_numeric(x[col], errors='coerce')
+    x = x.dropna(subset=['open','high','low','close'])
+    if len(x) < 20:
+        return "<div class='empty'>Chưa đủ lịch sử để dựng biểu đồ kỹ thuật.</div>"
+
+    close = x['close']
+    x['ma20'] = close.rolling(20, min_periods=20).mean()
+    x['ma50'] = close.rolling(50, min_periods=50).mean()
+    std20 = close.rolling(20, min_periods=20).std()
+    x['bb_upper'] = x['ma20'] + 2.0 * std20
+    x['bb_lower'] = x['ma20'] - 2.0 * std20
+    ema12 = close.ewm(span=12, adjust=False, min_periods=12).mean()
+    ema26 = close.ewm(span=26, adjust=False, min_periods=26).mean()
+    x['macd'] = ema12 - ema26
+    x['signal'] = x['macd'].ewm(span=9, adjust=False, min_periods=9).mean()
+    x['hist'] = x['macd'] - x['signal']
+
+    left, right = 54, 72
+    price_top, price_bottom = 28, 445
+    vol_top, vol_bottom = 330, 445
+    macd_top, macd_bottom = 500, 680
+    pw = width - left - right
+
+    price_min = float(np.nanmin([x['low'].min(), x['bb_lower'].min()]))
+    price_max = float(np.nanmax([x['high'].max(), x['bb_upper'].max()]))
+    if not np.isfinite(price_min) or not np.isfinite(price_max) or price_max <= price_min:
+        return "<div class='empty'>Không thể xác định thang giá.</div>"
+    pad = (price_max - price_min) * 0.05
+    price_min -= pad
+    price_max += pad
+    max_vol = max(1.0, float(x['volume'].fillna(0).max()))
+    macd_vals = pd.concat([x['macd'],x['signal'],x['hist']]).dropna()
+    macd_lim = max(1e-9, float(macd_vals.abs().max()) * 1.12) if not macd_vals.empty else 1.0
+
+    n = len(x)
+    step = pw / max(1, n)
+    candle_w = max(1.4, min(7.0, step * 0.62))
+
+    def sx(i): return left + (i + 0.5) * step
+    def sy_price(v): return price_top + (price_max - float(v)) / (price_max - price_min) * (price_bottom - price_top)
+    def sy_vol(v): return vol_bottom - float(v) / max_vol * (vol_bottom - vol_top)
+    def sy_macd(v): return macd_top + (macd_lim - float(v)) / (2 * macd_lim) * (macd_bottom - macd_top)
+
+    chunks = [
+        f"<svg viewBox='0 0 {width} {height}' class='chart-svg candle-chart' role='img' aria-label='Biểu đồ nến {html.escape(str(ticker))}'>",
+        f"<rect x='0' y='0' width='{width}' height='{height}' class='terminal-bg'/>",
+    ]
+
+    for frac in np.linspace(0,1,6):
+        py = price_top + frac*(price_bottom-price_top)
+        val = price_max - frac*(price_max-price_min)
+        chunks.append(f"<line x1='{left}' y1='{py:.1f}' x2='{width-right}' y2='{py:.1f}' class='terminal-grid'/>")
+        chunks.append(f"<text x='{width-right+8}' y='{py+4:.1f}' class='terminal-axis'>{val:,.1f}</text>")
+    for frac in np.linspace(0,1,7):
+        xx = left + frac*pw
+        chunks.append(f"<line x1='{xx:.1f}' y1='{price_top}' x2='{xx:.1f}' y2='{macd_bottom}' class='terminal-grid'/>")
+
+    for col, cls in [('bb_upper','bb-line'),('bb_lower','bb-line'),('ma20','ma20-line'),('ma50','ma50-line')]:
+        pts=[]
+        for i,row in x.iterrows():
+            if pd.notna(row[col]):
+                pts.append(f"{sx(i):.1f},{sy_price(row[col]):.1f}")
+        if len(pts)>=2:
+            chunks.append(f"<polyline points='{' '.join(pts)}' class='{cls}'/>")
+
+    for i,row in x.iterrows():
+        up=float(row['close'])>=float(row['open'])
+        cls='vol-up' if up else 'vol-down'
+        vy=sy_vol(row.get('volume',0) or 0)
+        chunks.append(f"<rect x='{sx(i)-candle_w/2:.1f}' y='{vy:.1f}' width='{candle_w:.1f}' height='{max(0.8,vol_bottom-vy):.1f}' class='{cls}'/>")
+
+    for i,row in x.iterrows():
+        up=float(row['close'])>=float(row['open'])
+        cls='candle-up' if up else 'candle-down'
+        xx=sx(i); yhi=sy_price(row['high']); ylo=sy_price(row['low'])
+        yo=sy_price(row['open']); yc=sy_price(row['close'])
+        body_y=min(yo,yc); body_h=max(1.2,abs(yc-yo))
+        date_txt=pd.Timestamp(row['date']).strftime('%d/%m/%Y')
+        title=f"{ticker} {date_txt} O:{row['open']:.1f} H:{row['high']:.1f} L:{row['low']:.1f} C:{row['close']:.1f}"
+        chunks.append(f"<line x1='{xx:.1f}' y1='{yhi:.1f}' x2='{xx:.1f}' y2='{ylo:.1f}' class='{cls}'><title>{html.escape(title)}</title></line>")
+        chunks.append(f"<rect x='{xx-candle_w/2:.1f}' y='{body_y:.1f}' width='{candle_w:.1f}' height='{body_h:.1f}' class='{cls}'><title>{html.escape(title)}</title></rect>")
+
+    last_close=float(x.iloc[-1]['close']); ly=sy_price(last_close)
+    chunks.append(f"<line x1='{left}' y1='{ly:.1f}' x2='{width-right}' y2='{ly:.1f}' class='last-price-line'/>")
+    chunks.append(f"<rect x='{width-right+2}' y='{ly-10:.1f}' width='64' height='20' rx='4' class='last-price-box'/>")
+    chunks.append(f"<text x='{width-right+34}' y='{ly+4:.1f}' text-anchor='middle' class='last-price-text'>{last_close:,.1f}</text>")
+
+    chunks.append(f"<line x1='{left}' y1='{macd_top-24}' x2='{width-right}' y2='{macd_top-24}' class='panel-sep'/>")
+    zero=sy_macd(0)
+    chunks.append(f"<line x1='{left}' y1='{zero:.1f}' x2='{width-right}' y2='{zero:.1f}' class='macd-zero'/>")
+    for i,row in x.iterrows():
+        hv=row['hist']
+        if pd.isna(hv): continue
+        yy=sy_macd(hv); cls='macd-bar-pos' if hv>=0 else 'macd-bar-neg'
+        chunks.append(f"<rect x='{sx(i)-max(1,candle_w*.42):.1f}' y='{min(yy,zero):.1f}' width='{max(2,candle_w*.84):.1f}' height='{max(1,abs(zero-yy)):.1f}' class='{cls}'/>")
+    for col,cls in [('macd','macd-line'),('signal','signal-line')]:
+        pts=[]
+        for i,row in x.iterrows():
+            if pd.notna(row[col]):
+                pts.append(f"{sx(i):.1f},{sy_macd(row[col]):.1f}")
+        if len(pts)>=2:
+            chunks.append(f"<polyline points='{' '.join(pts)}' class='{cls}'/>")
+
+    chunks.append(f"<text x='{left}' y='{macd_top-33}' class='terminal-label'>MACD (12,26,9)</text>")
+    chunks.append(f"<text x='{left+118}' y='{macd_top-33}' class='legend-ma20'>MA20</text>")
+    chunks.append(f"<text x='{left+164}' y='{macd_top-33}' class='legend-ma50'>MA50</text>")
+    chunks.append(f"<text x='{left+210}' y='{macd_top-33}' class='legend-bb'>Bollinger Bands</text>")
+
+    tick_idx=sorted(set(np.linspace(0,n-1,min(7,n)).astype(int).tolist()))
+    for i in tick_idx:
+        d=pd.Timestamp(x.iloc[i]['date'])
+        chunks.append(f"<text x='{sx(i):.1f}' y='{height-16}' text-anchor='middle' class='terminal-axis'>{d.strftime('%m/%Y')}</text>")
+    chunks.append("</svg>")
+    return ''.join(chunks)
+
+
+def _candidate_charts(price_history: pd.DataFrame | None, entry_candidates: pd.DataFrame, days: int = 126) -> str:
+    if price_history is None or price_history.empty or entry_candidates is None or entry_candidates.empty:
+        return "<div class='empty'>Chưa có ứng viên hoặc dữ liệu giá để hiển thị chart.</div>"
+    cards=[]
+    for i,(_,row) in enumerate(entry_candidates.head(3).iterrows()):
+        ticker=str(row['ticker'])
+        setup=html.escape(str(row.get('technical_setup','')))
+        score=_num(row.get('entry_score'),1)
+        open_attr=" open" if i==0 else ""
+        cards.append(
+            f"<details class='price-chart-detail'{open_attr}>"
+            f"<summary><span>#{i+1} <b>{html.escape(ticker)}</b></span><span class='chart-meta'>Điểm mở vị thế {score} · {setup}</span></summary>"
+            f"<div class='terminal-chart-wrap'>{_candlestick_macd_svg(price_history,ticker,days=days)}</div>"
+            "</details>"
+        )
+    return ''.join(cards)
+
+
 def _rotation_svg(sectors: pd.DataFrame, width=980, height=440) -> str:
     if sectors.empty:
         return "<div class='empty'>Chưa đủ dữ liệu ngành.</div>"
@@ -469,6 +617,7 @@ def render_dashboard(
     sector_history: pd.DataFrame | None = None,
     backtest: dict[str, pd.DataFrame] | None = None,
     opportunity_cfg: dict | None = None,
+    price_history: pd.DataFrame | None = None,
 ):
     latest=latest.copy()
     leaders = latest.sort_values('leadership_score', ascending=False)
@@ -524,6 +673,7 @@ def render_dashboard(
         bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus',6)),
     )
     opportunity_count=len(short_entries)+len(long_entries)
+    entry_chart_html=_candidate_charts(price_history,entry_candidates,days=126)
 
     css = """
     :root{
@@ -549,7 +699,7 @@ def render_dashboard(
     table.data{width:100%;border-collapse:collapse;font-size:12px}table.data th,table.data td{padding:8px 8px;border-bottom:1px solid rgba(32,49,76,.66);text-align:right;white-space:nowrap}table.data th:first-child,table.data td:first-child,table.data th:nth-child(2),table.data td:nth-child(2){text-align:left}table.data th{color:#91a5c2;font-weight:650;background:rgba(255,255,255,.014);position:sticky;top:0}.table-wrap{overflow:auto;max-height:515px}
     .mini-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mini-card{padding:13px}.mini-title{font-size:13px;font-weight:750;margin-bottom:9px}.mini-grid{display:grid;grid-template-columns:1fr auto;gap:5px 10px;font-size:11px;color:var(--muted)}.mini-grid b{color:#e5eefc;font-variant-numeric:tabular-nums}
     .readout{margin:0;padding-left:18px;color:#c8d5e8;font-size:13px;line-height:1.65}.readout b{color:white}.disclaimer{margin-top:20px;padding:14px 16px;border:1px solid #2d3d58;background:#0a1423;border-radius:11px;font-size:11px;color:#8da0bc;line-height:1.55}
-    .opportunity-shell{border:1px solid #34506f;background:linear-gradient(180deg,rgba(16,37,57,.98),rgba(10,23,39,.98));box-shadow:0 0 0 1px rgba(84,215,239,.05),0 18px 44px rgba(0,0,0,.18)}.opportunity-shell.has-alert{border-color:#3f856c;box-shadow:0 0 0 1px rgba(69,212,131,.10),0 18px 44px rgba(0,0,0,.20)}.opportunity-title{display:flex;align-items:center;gap:9px}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#66778f}.has-alert .pulse-dot{background:var(--green);box-shadow:0 0 0 5px rgba(69,212,131,.10)}.count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;border-radius:999px;padding:0 7px;background:#142943;border:1px solid #2f4c70;color:#dcecff;font-size:11px;font-weight:750}.has-alert .count-badge{background:rgba(69,212,131,.10);border-color:#34745e;color:#8ff0b5}.opp-col{min-width:0}.opp-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px;font-weight:750}.opp-threshold{font-size:10px;color:var(--muted);font-weight:500}.portfolio-note{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 12px}.portfolio-pill{border:1px solid #2b405f;background:#0b1728;border-radius:9px;padding:8px 10px;font-size:11px;color:#aebdd2}.portfolio-pill b{display:block;color:#eef5ff;font-size:13px;margin-top:2px}
+    .entry-panel{margin-top:16px;border:1px solid #3b745f;background:linear-gradient(180deg,rgba(19,48,42,.62),rgba(11,26,36,.98));box-shadow:0 16px 42px rgba(0,0,0,.22)}.entry-panel h2{font-size:19px}.entry-rule{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}.rule-pill{font-size:10px;border:1px solid #315a4d;background:rgba(69,212,131,.07);color:#bdebd0;border-radius:999px;padding:5px 8px}.price-chart-detail{margin-top:10px;border:1px solid #243854;border-radius:10px;background:#081321;overflow:hidden}.price-chart-detail summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:0;background:#0b1728}.chart-meta{font-size:11px;color:var(--muted);font-weight:500}.terminal-chart-wrap{padding:8px;background:#07111f;overflow:auto}.candle-chart{min-width:980px;background:#07111f;border-radius:8px}.terminal-bg{fill:#07111f}.terminal-grid{stroke:#1a2a40;stroke-width:1;opacity:.72}.terminal-axis,.terminal-label{fill:#93a6c0;font-size:10px}.terminal-label{fill:#c2cee0;font-weight:650}.panel-sep{stroke:#263a55}.candle-up{fill:#18a999;stroke:#18a999;stroke-width:1}.candle-down{fill:#ef4d61;stroke:#ef4d61;stroke-width:1}.vol-up{fill:#16796f;opacity:.75}.vol-down{fill:#a73d4b;opacity:.72}.ma20-line{fill:none;stroke:#45d483;stroke-width:1.6}.ma50-line{fill:none;stroke:#f2bf55;stroke-width:1.5}.bb-line{fill:none;stroke:#7186a5;stroke-width:1;stroke-dasharray:3 4;opacity:.65}.last-price-line{stroke:#20b8a8;stroke-width:1;stroke-dasharray:2 3;opacity:.65}.last-price-box{fill:#148f84}.last-price-text{fill:white;font-size:10px;font-weight:700}.macd-zero{stroke:#40516d;stroke-width:1}.macd-bar-pos{fill:#61d4c7;opacity:.9}.macd-bar-neg{fill:#f16978;opacity:.9}.macd-line{fill:none;stroke:#3da5ff;stroke-width:1.7}.signal-line{fill:none;stroke:#ff8a3d;stroke-width:1.7}.legend-ma20{fill:#45d483;font-size:10px}.legend-ma50{fill:#f2bf55;font-size:10px}.legend-bb{fill:#91a5c2;font-size:10px}\n    .opportunity-shell{border:1px solid #34506f;background:linear-gradient(180deg,rgba(16,37,57,.98),rgba(10,23,39,.98));box-shadow:0 0 0 1px rgba(84,215,239,.05),0 18px 44px rgba(0,0,0,.18)}.opportunity-shell.has-alert{border-color:#3f856c;box-shadow:0 0 0 1px rgba(69,212,131,.10),0 18px 44px rgba(0,0,0,.20)}.opportunity-title{display:flex;align-items:center;gap:9px}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#66778f}.has-alert .pulse-dot{background:var(--green);box-shadow:0 0 0 5px rgba(69,212,131,.10)}.count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;border-radius:999px;padding:0 7px;background:#142943;border:1px solid #2f4c70;color:#dcecff;font-size:11px;font-weight:750}.has-alert .count-badge{background:rgba(69,212,131,.10);border-color:#34745e;color:#8ff0b5}.opp-col{min-width:0}.opp-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px;font-weight:750}.opp-threshold{font-size:10px;color:var(--muted);font-weight:500}.portfolio-note{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 12px}.portfolio-pill{border:1px solid #2b405f;background:#0b1728;border-radius:9px;padding:8px 10px;font-size:11px;color:#aebdd2}.portfolio-pill b{display:block;color:#eef5ff;font-size:13px;margin-top:2px}
     details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:#aebdd2;font-size:12px}.method{font-size:12px;color:var(--muted);line-height:1.6}
     @media(max-width:1150px){.kpis{grid-template-columns:repeat(3,1fr)}.grid-2,.grid-even{grid-template-columns:1fr}.grid-3{grid-template-columns:1fr 1fr}}
     @media(max-width:680px){.shell{padding:17px 13px 35px}.topline{align-items:flex-start;flex-direction:column}.kpis{grid-template-columns:1fr 1fr}.grid-3,.mini-cards{grid-template-columns:1fr}.bar-row{grid-template-columns:110px 1fr 38px 42px}.nav{position:static}.big{font-size:23px}.sector-rank-row summary{grid-template-columns:38px 1fr 45px 45px}.sector-meter,.sector-leader{display:none}.sector-stocks{padding-left:12px}}
@@ -579,6 +729,8 @@ def render_dashboard(
       <div class='entry-rule'><span class='rule-pill'>MACD &gt; 0 + Histogram &gt; 0</span><span class='rule-pill'>MA20 &gt; MA50</span><span class='rule-pill'>Ngành đủ mạnh</span><span class='rule-pill'>Bonus: MA cross gần đây</span><span class='rule-pill'>Bonus: breakout sau BB squeeze</span></div>
       <div class='note' style='margin-bottom:10px'>Chỉ xếp hạng các mã qua đủ bộ lọc kỹ thuật bắt buộc. Breakout sau giai đoạn Bollinger Band siết là điểm cộng, không phải điều kiện bắt buộc. Nếu ít hơn 3 mã đạt chuẩn, bảng sẽ hiển thị ít hơn 3 thay vì nới điều kiện.</div>
       <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_score','sector_score','leadership_score','short_momentum_score','long_momentum_score','macd_status','ma_status','technical_setup','stage'],3)}</div>
+      <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>6-month technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>~126 phiên</span></div>
+      {entry_chart_html}
     </div>
 
     <div class='nav'><a href='#entry-top3'>Top 3 setup</a><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
