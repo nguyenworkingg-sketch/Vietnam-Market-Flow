@@ -85,7 +85,9 @@ No secrets are required for the CSV demo. The live Vnstock job can run in Guest 
 
 ## Dashboard
 
-The GitHub Pages dashboard is designed as a compact research terminal rather than a score table. It includes market regime/breadth history, stage breadth, sector rotation and sector-strength history, leadership-vs-acceleration scatter, score distribution, leader/emerging/fading tables, and rolling backtest diagnostics (decile alpha and IC) when enough forward observations exist.
+The GitHub Pages dashboard is designed as a compact research terminal rather than a score table. It includes market regime/breadth history, stage breadth, sector rotation and sector-strength history, leadership-vs-acceleration scatter, score distribution, leader/emerging/fading tables, a daily short/long momentum opportunity monitor, a sector-first 10-stock model portfolio, and rolling backtest diagnostics (decile alpha and IC) when enough forward observations exist.
+
+The opportunity monitor uses two independent cross-sectional scores (0–100): **short momentum** emphasizes 5/20-session relative strength, liquidity expansion and MA20 participation; **long momentum** emphasizes 60/120-session relative strength, MA50 structure and 52-week positioning. A new opportunity appears only on a threshold crossing, with a default threshold of 80 and Sector Score confirmation of at least 50.
 
 ## Outputs
 
@@ -93,6 +95,9 @@ The GitHub Pages dashboard is designed as a compact research terminal rather tha
 - `outputs/dashboard.html`
 - `outputs/scores_latest.csv`
 - `outputs/market_regime.csv`
+- `outputs/opportunities_short_latest.csv`
+- `outputs/opportunities_long_latest.csv`
+- `outputs/model_portfolio_10.csv`
 - `outputs/scores_history.parquet` — rolling computation window, not the long-term source of truth.
 - Supabase `mf_*` tables — long-term production history when configured.
 
