@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 import pandas as pd
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
@@ -58,12 +59,15 @@ def main():
         'stage_entries': suite['stage_entries'],
         'ic_summary': suite['ic_summary'],
     }
+    cfg = yaml.safe_load((ROOT/'config'/'model.yaml').read_text(encoding='utf-8'))
+    opp_cfg = cfg.get('opportunities', {})
     render_dashboard(
         latest, reg_latest, ROOT/'outputs'/'dashboard.html',
         scored_history=scored,
         regime_history=regime,
         sector_history=sector_history,
         backtest=bt_payload,
+        opportunity_cfg=opp_cfg,
     )
     (ROOT/'docs').mkdir(exist_ok=True)
     render_dashboard(
