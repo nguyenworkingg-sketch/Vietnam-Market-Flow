@@ -68,6 +68,9 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     text = out.read_text(encoding='utf-8')
     assert 'Xu hướng regime & độ rộng' in text
     assert 'Luân chuyển ngành' in text
+    assert 'Xếp hạng ngành & cổ phiếu dẫn dắt' in text
+    assert 'Bấm vào từng ngành để xem top 5 cổ phiếu' in text
+    assert 'AAA' in text
     assert 'Điểm dẫn dắt × tăng tốc' in text
     assert 'Alpha theo decile' in text
     assert '<svg' in text
