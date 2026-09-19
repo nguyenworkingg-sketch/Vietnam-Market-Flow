@@ -5,8 +5,8 @@ model:
   # Daily production only needs enough observations for MA200 / 52-week high.
   live_lookback_days: 520
   # Current HOSE/HNX/UPCOM groups are screened by live trading value first;
-  # only the most liquid 300 names need full historical OHLCV during bootstrap.
-  live_max_symbols: 300
+  # only the most liquid 200 names need full historical OHLCV during bootstrap; daily runs then use the persistent cache.
+  live_max_symbols: 200
   sector_level: 2            # ICB supersector: broad enough for stable breadth/rotation
   min_price: 3.0              # thousand VND/share
   min_avg_value_20: 10000000000  # 10bn VND/day
