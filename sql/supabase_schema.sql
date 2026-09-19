@@ -35,6 +35,8 @@ create table if not exists public.mf_scores_daily (
   trend_score double precision,
   sector_score double precision,
   leadership_score double precision,
+  short_momentum_score double precision,
+  long_momentum_score double precision,
   acceleration double precision,
   stage text,
   created_at timestamptz not null default now(),
@@ -91,3 +93,6 @@ alter table public.mf_market_regime add column if not exists coverage_reference 
 
 alter table public.mf_universe add column if not exists is_active boolean not null default true;
 alter table public.mf_universe add column if not exists last_seen date;
+
+alter table public.mf_scores_daily add column if not exists short_momentum_score double precision;
+alter table public.mf_scores_daily add column if not exists long_momentum_score double precision;
