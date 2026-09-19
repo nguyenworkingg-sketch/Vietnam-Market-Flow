@@ -83,6 +83,10 @@ Optional GitHub Actions secrets:
 
 No secrets are required for the CSV demo. The live Vnstock job can run in Guest mode, but more slowly.
 
+## Dashboard
+
+The GitHub Pages dashboard is designed as a compact research terminal rather than a score table. It includes market regime/breadth history, stage breadth, sector rotation and sector-strength history, leadership-vs-acceleration scatter, score distribution, leader/emerging/fading tables, and rolling backtest diagnostics (decile alpha and IC) when enough forward observations exist.
+
 ## Outputs
 
 - `docs/index.html` — GitHub Pages dashboard after the first full successful production run.
