@@ -52,7 +52,7 @@ class VNStockProvider:
             # Community plan is capped at 60 requests/minute. Some vnstock
             # operations fan out internally, so stay well below the nominal
             # one-request-per-second ceiling.
-            self.sleep = 1.7 if api_key else 7.0
+            self.sleep = 4.0 if api_key else 7.0
         if api_key:
             try:
                 register_user(api_key=api_key)
@@ -150,21 +150,49 @@ class VNStockProvider:
         return pd.DataFrame(columns=["ticker", "sector"])
 
     def _current_market_groups(self, listing) -> pd.DataFrame:
+        # KBS exposes one current security master with exchange + asset type.
+        # Prefer that over VCI's group endpoint, which can intermittently
+        # return an empty payload for HOSE/HNX/UPCOM in CI.
+        try:
+            kbs_listing = self.Listing(source="KBS")
+            raw = kbs_listing.symbols_by_exchange()
+            out = self._exchange_frame(raw)
+            out["ticker"] = out["ticker"].astype(str).str.upper().str.strip()
+            if "exchange" in out.columns:
+                out["exchange"] = out["exchange"].astype(str).str.upper()
+                out = out[out["exchange"].isin(["HOSE", "HNX", "UPCOM"])].copy()
+            if "type" in out.columns:
+                out = out[out["type"].astype(str).str.upper().eq("STOCK")].copy()
+            out = out[out["ticker"].str.fullmatch(r"[A-Z0-9]{3,10}", na=False)]
+            if not out.empty:
+                return out.drop_duplicates("ticker").reset_index(drop=True)
+        except Exception as exc:
+            print(f"[WARN] KBS security master unavailable: {exc}")
+
+        # Last-resort fallback to exchange groups from the configured listing
+        # provider. Each exchange is isolated so one empty endpoint does not
+        # abort the other two.
         frames = []
         for exchange in ["HOSE", "HNX", "UPCOM"]:
             try:
-                raw = listing.symbols_by_group(exchange)
-            except TypeError:
-                raw = listing.symbols_by_group(group=exchange)
-            if isinstance(raw, pd.Series):
-                syms = raw.astype(str).tolist()
-            elif isinstance(raw, pd.DataFrame):
-                col = "symbol" if "symbol" in raw.columns else ("ticker" if "ticker" in raw.columns else raw.columns[0])
-                syms = raw[col].astype(str).tolist()
-            else:
-                syms = list(raw)
-            frames.append(pd.DataFrame({"ticker": syms, "exchange": exchange}))
+                try:
+                    raw = listing.symbols_by_group(exchange)
+                except TypeError:
+                    raw = listing.symbols_by_group(group=exchange)
+                if isinstance(raw, pd.Series):
+                    syms = raw.astype(str).tolist()
+                elif isinstance(raw, pd.DataFrame):
+                    col = "symbol" if "symbol" in raw.columns else ("ticker" if "ticker" in raw.columns else raw.columns[0])
+                    syms = raw[col].astype(str).tolist()
+                else:
+                    syms = list(raw)
+                frames.append(pd.DataFrame({"ticker": syms, "exchange": exchange}))
+            except Exception as exc:
+                print(f"[WARN] {exchange} group unavailable: {exc}")
             time.sleep(self.sleep)
+
+        if not frames:
+            return pd.DataFrame(columns=["ticker", "exchange"])
         out = pd.concat(frames, ignore_index=True)
         out["ticker"] = out["ticker"].astype(str).str.upper().str.strip()
         out = out[out["ticker"].str.fullmatch(r"[A-Z0-9]{3,10}", na=False)]
@@ -279,12 +307,12 @@ class VNStockProvider:
                 boards.append(b)
             time.sleep(self.sleep)
         if not boards:
-            return syms[: self.live_max_symbols]
+            raise RuntimeError("Live price-board liquidity prefilter returned no data.")
         board = pd.concat(boards, ignore_index=True)
         symcol = next((c for c in ["symbol", "ticker"] if c in board.columns), None)
         valcol = next((c for c in ["total_value", "value", "trading_value"] if c in board.columns), None)
         if not symcol or not valcol:
-            return syms[: self.live_max_symbols]
+            raise RuntimeError("Live price board has no recognizable symbol/value columns.")
         board[valcol] = pd.to_numeric(board[valcol], errors="coerce").fillna(0)
         selected = board.sort_values(valcol, ascending=False)[symcol].astype(str).str.upper().head(self.live_max_symbols).tolist()
         return selected
@@ -313,6 +341,40 @@ class VNStockProvider:
         if not frames:
             raise RuntimeError("No equity data returned from provider.")
         return pd.concat(frames, ignore_index=True)
+
+    def select_live_symbols(self, universe: pd.DataFrame) -> list[str]:
+        return self._select_live_symbols(universe)
+
+    def get_board_bars(self, symbols: Iterable[str], trade_date) -> pd.DataFrame:
+        frames = []
+        syms = [str(s).upper() for s in symbols]
+        for i in range(0, len(syms), 100):
+            b = self._price_board(syms[i:i+100])
+            if not b.empty:
+                frames.append(b)
+            time.sleep(self.sleep)
+        if not frames:
+            return pd.DataFrame(columns=['date','ticker','open','high','low','close','volume','value'])
+        board = pd.concat(frames, ignore_index=True)
+        rename = {
+            'symbol': 'ticker',
+            'open_price': 'open',
+            'high_price': 'high',
+            'low_price': 'low',
+            'close_price': 'close',
+            'volume_accumulated': 'volume',
+            'total_value': 'value',
+        }
+        x = board.rename(columns=rename)
+        needed = ['ticker','open','high','low','close','volume','value']
+        for col in needed:
+            if col not in x.columns:
+                x[col] = np.nan
+        x = x[needed].copy()
+        x['ticker'] = x['ticker'].astype(str).str.upper()
+        x['date'] = pd.Timestamp(trade_date).normalize()
+        x = self._normalize_equity_prices(x)
+        return x[['date','ticker','open','high','low','close','volume','value']].dropna(subset=['ticker','close'])
 
     def get_prices(self, start: str, end: str | None = None) -> pd.DataFrame:
         if self.symbols:

@@ -11,6 +11,21 @@ create table if not exists public.mf_universe (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.mf_ohlcv_daily (
+  trade_date date not null,
+  ticker text not null,
+  open double precision,
+  high double precision,
+  low double precision,
+  close double precision,
+  volume double precision,
+  value double precision,
+  created_at timestamptz not null default now(),
+  primary key (trade_date, ticker)
+);
+create index if not exists mf_ohlcv_daily_ticker_date_idx on public.mf_ohlcv_daily(ticker, trade_date desc);
+create index if not exists mf_ohlcv_daily_date_idx on public.mf_ohlcv_daily(trade_date desc);
+
 create table if not exists public.mf_scores_daily (
   trade_date date not null,
   ticker text not null,
@@ -64,6 +79,7 @@ create table if not exists public.mf_runs (
 );
 
 alter table public.mf_universe enable row level security;
+alter table public.mf_ohlcv_daily enable row level security;
 alter table public.mf_scores_daily enable row level security;
 alter table public.mf_sector_daily enable row level security;
 alter table public.mf_market_regime enable row level security;

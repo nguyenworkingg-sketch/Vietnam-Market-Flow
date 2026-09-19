@@ -120,6 +120,28 @@ class SupabaseRESTStore:
             body = e.read().decode('utf-8', errors='replace')
             raise RuntimeError(f'Supabase delete failed table={table} status={e.code}: {body}') from e
 
+    def _get_rows(self, table: str, params: dict[str, str], page_size: int = 1000) -> list[dict]:
+        rows: list[dict] = []
+        offset = 0
+        while True:
+            endpoint = f'{self.url}/rest/v1/{table}?' + urlencode(params, safe='(),.*')
+            headers = self._headers()
+            headers['Range-Unit'] = 'items'
+            headers['Range'] = f'{offset}-{offset + page_size - 1}'
+            req = request.Request(endpoint, headers=headers, method='GET')
+            try:
+                with request.urlopen(req, timeout=60) as r:
+                    body = r.read().decode('utf-8')
+            except error.HTTPError as e:
+                body = e.read().decode('utf-8', errors='replace')
+                raise RuntimeError(f'Supabase read failed table={table} status={e.code}: {body}') from e
+            batch = json.loads(body) if body else []
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+        return rows
+
     def _batch_post(self, table: str, rows: list[dict], on_conflict: str | None = None):
         for i in range(0, len(rows), self.batch_size):
             self._post(table, rows[i:i+self.batch_size], on_conflict=on_conflict)
@@ -155,6 +177,31 @@ class SupabaseRESTStore:
             self._post('mf_runs', [{k: _clean_value(v) for k, v in values.items()}])
         else:
             self._patch('mf_runs', f'run_id=eq.{int(run_id)}', values)
+
+    def fetch_ohlcv(self, start_date, tickers: list[str] | None = None) -> pd.DataFrame:
+        params = {
+            'select': 'trade_date,ticker,open,high,low,close,volume,value',
+            'trade_date': f'gte.{pd.Timestamp(start_date).date().isoformat()}',
+            'order': 'trade_date.asc,ticker.asc',
+        }
+        if tickers:
+            params['ticker'] = 'in.(' + ','.join(sorted(set(map(str, tickers)))) + ')'
+        rows = self._get_rows('mf_ohlcv_daily', params)
+        if not rows:
+            return pd.DataFrame(columns=['date','ticker','open','high','low','close','volume','value'])
+        x = pd.DataFrame(rows).rename(columns={'trade_date':'date'})
+        x['date'] = pd.to_datetime(x['date']).dt.normalize()
+        for col in ['open','high','low','close','volume','value']:
+            if col in x.columns:
+                x[col] = pd.to_numeric(x[col], errors='coerce')
+        return x
+
+    def sync_ohlcv(self, prices: pd.DataFrame) -> None:
+        cols = ['date','ticker','open','high','low','close','volume','value']
+        x = prices[[col for col in cols if col in prices.columns]].copy()
+        x = x.dropna(subset=['date','ticker','close']).drop_duplicates(['date','ticker'], keep='last')
+        rows = _records(x, rename={'date':'trade_date'})
+        self._batch_post('mf_ohlcv_daily', rows, on_conflict='trade_date,ticker')
 
     def sync_universe(self, universe: pd.DataFrame, as_of_date=None) -> None:
         cols = [c for c in ['ticker', 'exchange', 'sector', 'name'] if c in universe.columns]

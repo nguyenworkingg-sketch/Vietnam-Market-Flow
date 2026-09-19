@@ -45,8 +45,49 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
     try:
         universe = provider.get_universe().copy()
         universe['ticker'] = universe['ticker'].astype(str).str.upper()
-        prices = provider.get_prices(start)
         bench = provider.get_benchmark(model['benchmark'], start)
+
+        # Vnstock Community is reliable enough for a one-time historical
+        # bootstrap, but refetching 12+ months for hundreds of stocks every day
+        # is both slow and quota-fragile. Persist the historical panel in
+        # Supabase and, after bootstrap, append only the bulk price-board bar.
+        if (
+            sb is not None
+            and provider_name == 'vnstock'
+            and hasattr(provider, 'select_live_symbols')
+            and hasattr(provider, 'get_board_bars')
+        ):
+            symbols = provider.select_live_symbols(universe)
+            cache = sb.fetch_ohlcv(start, tickers=symbols)
+            counts = cache.groupby('ticker')['date'].nunique() if not cache.empty else pd.Series(dtype='int64')
+            required = int(model['min_history_days']) + 30
+            missing = [s for s in symbols if int(counts.get(s, 0)) < required]
+
+            if missing:
+                print(f'[CACHE] Bootstrap/repair histories: {len(missing)} symbols')
+                fresh = provider.get_prices_for_symbols(missing, start)
+                sb.sync_ohlcv(fresh)
+                cache = pd.concat([cache, fresh], ignore_index=True)
+
+            as_of = pd.to_datetime(bench['date']).max()
+            board = provider.get_board_bars(symbols, as_of)
+            if not board.empty:
+                sb.sync_ohlcv(board)
+                cache = pd.concat([cache, board], ignore_index=True)
+
+            prices = (cache[cache['ticker'].isin(symbols)]
+                      .drop_duplicates(['date','ticker'], keep='last')
+                      .sort_values(['ticker','date'])
+                      .reset_index(drop=True))
+            if prices.empty:
+                raise RuntimeError('OHLCV cache is empty after bootstrap/update.')
+            print(
+                f'[CACHE] prices={len(prices):,} rows, '
+                f'symbols={prices["ticker"].nunique()}, '
+                f'asof={pd.to_datetime(prices["date"]).max().date()}'
+            )
+        else:
+            prices = provider.get_prices(start)
 
         meta_cols = ['ticker', 'sector'] + (['exchange'] if 'exchange' in universe.columns else [])
         prices = prices.merge(universe[meta_cols].drop_duplicates('ticker'), on='ticker', how='left')
