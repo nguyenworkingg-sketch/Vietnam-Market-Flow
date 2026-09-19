@@ -342,6 +342,40 @@ class VNStockProvider:
             raise RuntimeError("No equity data returned from provider.")
         return pd.concat(frames, ignore_index=True)
 
+    def select_live_symbols(self, universe: pd.DataFrame) -> list[str]:
+        return self._select_live_symbols(universe)
+
+    def get_board_bars(self, symbols: Iterable[str], trade_date) -> pd.DataFrame:
+        frames = []
+        syms = [str(s).upper() for s in symbols]
+        for i in range(0, len(syms), 100):
+            b = self._price_board(syms[i:i+100])
+            if not b.empty:
+                frames.append(b)
+            time.sleep(self.sleep)
+        if not frames:
+            return pd.DataFrame(columns=['date','ticker','open','high','low','close','volume','value'])
+        board = pd.concat(frames, ignore_index=True)
+        rename = {
+            'symbol': 'ticker',
+            'open_price': 'open',
+            'high_price': 'high',
+            'low_price': 'low',
+            'close_price': 'close',
+            'volume_accumulated': 'volume',
+            'total_value': 'value',
+        }
+        x = board.rename(columns=rename)
+        needed = ['ticker','open','high','low','close','volume','value']
+        for col in needed:
+            if col not in x.columns:
+                x[col] = np.nan
+        x = x[needed].copy()
+        x['ticker'] = x['ticker'].astype(str).str.upper()
+        x['date'] = pd.Timestamp(trade_date).normalize()
+        x = self._normalize_equity_prices(x)
+        return x[['date','ticker','open','high','low','close','volume','value']].dropna(subset=['ticker','close'])
+
     def get_prices(self, start: str, end: str | None = None) -> pd.DataFrame:
         if self.symbols:
             symbols = self.symbols
