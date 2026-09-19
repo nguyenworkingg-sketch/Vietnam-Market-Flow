@@ -107,5 +107,6 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert 'Điểm dẫn dắt × tăng tốc' in text
     assert 'Biểu đồ nến · Volume · MACD' in text
     assert 'MACD (12,26,9)' in text
+    assert 'MỞ VỊ THẾ · MODEL' in text
     assert 'Alpha theo decile' in text
     assert '<svg' in text
