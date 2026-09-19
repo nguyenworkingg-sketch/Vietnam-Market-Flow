@@ -23,6 +23,15 @@ def _latest():
         'trend_score': [91,80,74,65,52,42],
         'sector_score': [86,86,79,70,58,58],
         'stage': ['LEADER','MATURE','EMERGING','EMERGING','NEUTRAL','FADING'],
+        'macd': [1.2,1.0,.8,.6,.2,-.1],
+        'macd_signal': [.8,.7,.5,.4,.2,0],
+        'macd_hist': [.4,.3,.3,.2,0,-.1],
+        'macd_positive': [True,True,True,True,False,False],
+        'ma20': [30,28,26,24,22,20],
+        'ma50': [28,27,25,23,23,21],
+        'ma_bull': [True,True,True,True,False,False],
+        'ma_cross_recent_10': [False,True,False,False,False,False],
+        'bb_breakout_after_squeeze': [True,False,False,False,False,False],
     })
 
 
@@ -63,6 +72,17 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     previous['long_momentum_score'] = [86,77,79,74,58,45]
     scored_history = pd.concat([previous, latest], ignore_index=True)
 
+    price_rows=[]
+    for ticker in latest['ticker']:
+        base=20+len(price_rows)*2
+        for i,d in enumerate(dates):
+            close=base+i*.08
+            price_rows.append({
+                'date':d,'ticker':ticker,'open':close-.1,'high':close+.3,
+                'low':close-.25,'close':close,'volume':1_000_000+i*10_000,
+            })
+    price_history=pd.DataFrame(price_rows)
+
     out = tmp_path/'dashboard.html'
     render_dashboard(
         latest,
@@ -73,6 +93,7 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
         regime_history=regime,
         sector_history=sectors,
         backtest={'deciles':deciles,'ic_daily':ic,'summary':summary},
+        price_history=price_history,
     )
     text = out.read_text(encoding='utf-8')
     assert 'Xu hướng regime & độ rộng' in text
@@ -84,5 +105,7 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert 'Bấm vào từng ngành để xem top 5 cổ phiếu' in text
     assert 'AAA' in text
     assert 'Điểm dẫn dắt × tăng tốc' in text
+    assert 'Biểu đồ nến · Volume · MACD' in text
+    assert 'MACD (12,26,9)' in text
     assert 'Alpha theo decile' in text
     assert '<svg' in text

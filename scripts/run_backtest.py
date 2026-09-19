@@ -68,6 +68,7 @@ def main():
         sector_history=sector_history,
         backtest=bt_payload,
         opportunity_cfg=opp_cfg,
+        price_history=panel,
     )
     (ROOT/'docs').mkdir(exist_ok=True)
     render_dashboard(
@@ -76,6 +77,8 @@ def main():
         regime_history=regime,
         sector_history=sector_history,
         backtest=bt_payload,
+        opportunity_cfg=opp_cfg,
+        price_history=panel,
     )
 
     signal_rows = int(panel['leadership_score'].notna().sum())
