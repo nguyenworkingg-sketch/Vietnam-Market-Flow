@@ -166,3 +166,92 @@ def build_model_portfolio(
         columns={'sector_score_ranked':'sector_score'}
     )
     return out
+
+
+def build_entry_candidates(
+    latest: pd.DataFrame,
+    top_n: int = 3,
+    min_sector_score: float = 50.0,
+    require_macd_positive: bool = True,
+    require_ma_bull: bool = True,
+    ma_cross_bonus: float = 4.0,
+    bb_breakout_bonus: float = 6.0,
+) -> pd.DataFrame:
+    """Rank model entry candidates using sector/leadership plus technical gates.
+
+    Hard gates:
+    - MACD line > 0 and MACD histogram > 0 (when enabled).
+    - MA20 > MA50 (when enabled).
+    - Sector Score >= minimum threshold.
+
+    Optional confirmation bonuses:
+    - recent bullish MA20/MA50 cross within 10 sessions;
+    - breakout above upper Bollinger Band after a recent squeeze.
+
+    Returns fewer than top_n rows if the market has fewer valid setups.
+    """
+    if latest is None or latest.empty or top_n <= 0:
+        return pd.DataFrame()
+
+    x = latest.copy()
+    needed = [
+        'leadership_score','sector_score','short_momentum_score','long_momentum_score',
+        'flow_score','trend_score','macd','macd_signal','macd_hist','macd_positive',
+        'ma20','ma50','ma_bull','ma_cross_recent_10','bb_breakout_after_squeeze',
+    ]
+    for col in needed:
+        if col not in x.columns:
+            x[col] = np.nan
+
+    mask = pd.to_numeric(x['sector_score'], errors='coerce').ge(float(min_sector_score))
+    if require_macd_positive:
+        mask &= x['macd_positive'].fillna(False).astype(bool)
+    if require_ma_bull:
+        mask &= x['ma_bull'].fillna(False).astype(bool)
+    x = x.loc[mask].copy()
+    if x.empty:
+        return x
+
+    base = (
+        0.25 * pd.to_numeric(x['sector_score'], errors='coerce')
+        + 0.25 * pd.to_numeric(x['leadership_score'], errors='coerce')
+        + 0.20 * pd.to_numeric(x['short_momentum_score'], errors='coerce')
+        + 0.15 * pd.to_numeric(x['long_momentum_score'], errors='coerce')
+        + 0.10 * pd.to_numeric(x['flow_score'], errors='coerce')
+        + 0.05 * pd.to_numeric(x['trend_score'], errors='coerce')
+    )
+    x['entry_score'] = base.fillna(0)
+    x['entry_score'] += x['ma_cross_recent_10'].fillna(False).astype(bool).astype(float) * float(ma_cross_bonus)
+    x['entry_score'] += x['bb_breakout_after_squeeze'].fillna(False).astype(bool).astype(float) * float(bb_breakout_bonus)
+
+    x['technical_setup'] = np.where(
+        x['bb_breakout_after_squeeze'].fillna(False).astype(bool),
+        'BB squeeze breakout',
+        np.where(
+            x['ma_cross_recent_10'].fillna(False).astype(bool),
+            'MA cross gần đây',
+            'Trend xác nhận',
+        ),
+    )
+    x['macd_status'] = np.where(
+        x['macd_positive'].fillna(False).astype(bool),
+        'DƯƠNG',
+        'KHÔNG',
+    )
+    x['ma_status'] = np.where(
+        x['ma_bull'].fillna(False).astype(bool),
+        'MA20 > MA50',
+        'KHÔNG',
+    )
+    x = x.sort_values(
+        ['entry_score','sector_score','leadership_score','short_momentum_score'],
+        ascending=False,
+    ).head(top_n).reset_index(drop=True)
+    x['entry_rank'] = x.index + 1
+    cols = [
+        'entry_rank','ticker','sector','entry_score','sector_score','leadership_score',
+        'short_momentum_score','long_momentum_score','flow_score','trend_score',
+        'macd','macd_signal','macd_hist','macd_status','ma20','ma50','ma_status',
+        'ma_cross_recent_10','bb_breakout_after_squeeze','technical_setup','stage',
+    ]
+    return x[[col for col in cols if col in x.columns]]

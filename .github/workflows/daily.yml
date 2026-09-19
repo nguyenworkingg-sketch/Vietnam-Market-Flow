@@ -104,4 +104,5 @@ jobs:
             outputs/opportunities_short_latest.csv
             outputs/opportunities_long_latest.csv
             outputs/model_portfolio_10.csv
+            outputs/top3_entry_candidates.csv
             outputs/backtest/

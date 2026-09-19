@@ -6,7 +6,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
-from marketflow.selection import detect_opportunity_entries, build_model_portfolio
+from marketflow.selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates
 
 
 def test_detects_new_short_and_long_entries():
@@ -47,3 +47,34 @@ def test_model_portfolio_is_sector_first_and_capped():
     assert port.groupby('sector').size().max() <= 2
     assert set(['portfolio_rank','sector_rank','portfolio_score','weight']).issubset(port.columns)
     assert abs(port['weight'].sum() - 100) < 1e-9
+
+
+def test_entry_candidates_require_macd_and_ma_and_bonus_squeeze():
+    latest = pd.DataFrame([
+        {
+            'ticker':'AAA','sector':'Bank','sector_score':88,'leadership_score':90,
+            'short_momentum_score':92,'long_momentum_score':86,'flow_score':89,'trend_score':88,
+            'macd':1.2,'macd_signal':0.8,'macd_hist':0.4,'macd_positive':True,
+            'ma20':30,'ma50':28,'ma_bull':True,'ma_cross_recent_10':False,
+            'bb_breakout_after_squeeze':True,'stage':'LEADER',
+        },
+        {
+            'ticker':'BBB','sector':'Tech','sector_score':85,'leadership_score':91,
+            'short_momentum_score':90,'long_momentum_score':90,'flow_score':90,'trend_score':90,
+            'macd':1.0,'macd_signal':0.7,'macd_hist':0.3,'macd_positive':True,
+            'ma20':50,'ma50':47,'ma_bull':True,'ma_cross_recent_10':True,
+            'bb_breakout_after_squeeze':False,'stage':'LEADER',
+        },
+        {
+            'ticker':'CCC','sector':'Oil','sector_score':95,'leadership_score':95,
+            'short_momentum_score':95,'long_momentum_score':95,'flow_score':95,'trend_score':95,
+            'macd':-0.2,'macd_signal':-0.3,'macd_hist':0.1,'macd_positive':False,
+            'ma20':40,'ma50':38,'ma_bull':True,'ma_cross_recent_10':True,
+            'bb_breakout_after_squeeze':True,'stage':'LEADER',
+        },
+    ])
+    out = build_entry_candidates(latest, top_n=3)
+    assert set(out['ticker']) == {'AAA','BBB'}
+    assert 'CCC' not in out['ticker'].tolist()
+    assert out.iloc[0]['ticker'] == 'AAA'
+    assert out.iloc[0]['technical_setup'] == 'BB squeeze breakout'
