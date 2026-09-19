@@ -49,7 +49,10 @@ class VNStockProvider:
             # themselves take material network time, so a 1.1s client-side
             # pause remains comfortably below the documented ceiling while
             # avoiding a ~30 minute full refresh. Guest mode stays conservative.
-            self.sleep = 1.1 if api_key else 7.0
+            # Community plan is capped at 60 requests/minute. Some vnstock
+            # operations fan out internally, so stay well below the nominal
+            # one-request-per-second ceiling.
+            self.sleep = 1.7 if api_key else 7.0
         if api_key:
             try:
                 register_user(api_key=api_key)
@@ -146,10 +149,29 @@ class VNStockProvider:
                 continue
         return pd.DataFrame(columns=["ticker", "sector"])
 
+    def _current_market_groups(self, listing) -> pd.DataFrame:
+        frames = []
+        for exchange in ["HOSE", "HNX", "UPCOM"]:
+            try:
+                raw = listing.symbols_by_group(exchange)
+            except TypeError:
+                raw = listing.symbols_by_group(group=exchange)
+            if isinstance(raw, pd.Series):
+                syms = raw.astype(str).tolist()
+            elif isinstance(raw, pd.DataFrame):
+                col = "symbol" if "symbol" in raw.columns else ("ticker" if "ticker" in raw.columns else raw.columns[0])
+                syms = raw[col].astype(str).tolist()
+            else:
+                syms = list(raw)
+            frames.append(pd.DataFrame({"ticker": syms, "exchange": exchange}))
+            time.sleep(self.sleep)
+        out = pd.concat(frames, ignore_index=True)
+        out["ticker"] = out["ticker"].astype(str).str.upper().str.strip()
+        out = out[out["ticker"].str.fullmatch(r"[A-Z0-9]{3,10}", na=False)]
+        return out.drop_duplicates("ticker").reset_index(drop=True)
+
     def get_universe(self) -> pd.DataFrame:
         # Explicit-symbol mode is used by CI to validate the live OHLCV path.
-        # Avoid listing/industry endpoints here so Guest mode stays below its
-        # documented request ceiling.
         if self.symbols:
             return pd.DataFrame({
                 "ticker": self.symbols,
@@ -160,16 +182,19 @@ class VNStockProvider:
 
         listing = self._listing_obj()
 
-        # VCI's industry/company endpoint is the more stable source of the
-        # equity universe and ICB hierarchy.  Do NOT make symbols_by_exchange
-        # the left-hand table: some provider responses can omit HOSE names,
-        # which previously removed large liquid stocks such as FPT/VCB/HPG
-        # before scoring even started.
+        # Current exchange groups are authoritative for what is tradable now.
+        # The industry endpoint is much broader: it can include funds, delisted
+        # companies and other non-equity instruments, which previously caused
+        # thousands of invalid OHLCV calls and repeated rate-limit failures.
+        current = self._current_market_groups(listing)
+        if current.empty:
+            raise RuntimeError("Current HOSE/HNX/UPCOM groups are empty.")
+
         ind = self._industry_frame(listing)
         if ind.empty:
-            raise RuntimeError("Industry/company listing is empty; cannot build a reliable equity universe.")
+            raise RuntimeError("Industry/company listing is empty; cannot map sectors.")
+        ind["ticker"] = ind["ticker"].astype(str).str.upper().str.strip()
 
-        ind["ticker"] = ind["ticker"].astype(str).str.upper()
         if "icb_level" in ind.columns:
             level = pd.to_numeric(ind["icb_level"], errors="coerce")
             chosen = ind[level.eq(self.sector_level)].copy()
@@ -187,40 +212,22 @@ class VNStockProvider:
         keep = ["ticker", sector_col]
         if "organ_name" in ind.columns:
             keep.append("organ_name")
-        universe = ind[keep].copy().rename(columns={sector_col: "sector"})
-        universe = universe.drop_duplicates("ticker")
-
-        # Exchange is metadata only. Merge it when available, but never let an
-        # incomplete exchange endpoint delete an otherwise valid equity name.
-        try:
-            exch = self._all_exchange_symbols(listing)
-            if not exch.empty:
-                exch["ticker"] = exch["ticker"].astype(str).str.upper()
-                cols = ["ticker"]
-                if "exchange" in exch.columns:
-                    exch["exchange"] = exch["exchange"].astype(str).str.upper()
-                    cols.append("exchange")
-                if "type" in exch.columns:
-                    cols.append("type")
-                exch = exch[cols].drop_duplicates("ticker")
-                universe = universe.merge(exch, on="ticker", how="left")
-                if "type" in universe.columns:
-                    asset_type = universe["type"].fillna("STOCK").astype(str).str.upper()
-                    universe = universe[asset_type.eq("STOCK")].copy()
-        except Exception as exc:
-            print(f"[WARN] Exchange metadata unavailable; continuing from industry universe: {exc}")
-
-        if "sector" not in universe.columns:
-            universe["sector"] = "Chưa phân ngành"
+        meta = ind[keep].drop_duplicates("ticker").rename(columns={sector_col: "sector"})
+        universe = current.merge(meta, on="ticker", how="left")
         universe["sector"] = universe["sector"].fillna("Chưa phân ngành")
-        if "exchange" not in universe.columns:
-            universe["exchange"] = "UNKNOWN"
-        universe["exchange"] = universe["exchange"].fillna("UNKNOWN")
         if "organ_name" in universe.columns:
             universe = universe.rename(columns={"organ_name": "name"})
         if "name" not in universe.columns:
             universe["name"] = universe["ticker"]
 
+        print(
+            "[UNIVERSE] "
+            + ", ".join(
+                f"{ex}={int((universe['exchange']==ex).sum())}"
+                for ex in ["HOSE", "HNX", "UPCOM"]
+            )
+            + f", total={len(universe)}"
+        )
         return universe.drop_duplicates("ticker").reset_index(drop=True)
 
     def _ohlcv(self, kind: str, symbol: str, start: str, end: str | None) -> pd.DataFrame:
@@ -285,13 +292,23 @@ class VNStockProvider:
     def get_prices_for_symbols(self, symbols: Iterable[str], start: str, end: str | None = None) -> pd.DataFrame:
         frames = []
         for sym in [str(s).upper() for s in symbols]:
-            try:
-                d = self._ohlcv("equity", sym, start, end)
-                d = self._normalize_equity_prices(d)
-                d["ticker"] = sym
-                frames.append(d)
-            except Exception as exc:
-                print(f"[WARN] {sym}: {exc}")
+            for attempt in range(3):
+                try:
+                    d = self._ohlcv("equity", sym, start, end)
+                    d = self._normalize_equity_prices(d)
+                    d["ticker"] = sym
+                    frames.append(d)
+                    break
+                except SystemExit:
+                    # vnstock's Community limiter can raise SystemExit. Waiting
+                    # for the minute bucket is preferable to killing the entire
+                    # daily job after hundreds of successful symbols.
+                    wait = 65 + attempt * 15
+                    print(f"[WARN] Rate limit while fetching {sym}; retrying in {wait}s")
+                    time.sleep(wait)
+                except Exception as exc:
+                    print(f"[WARN] {sym}: {exc}")
+                    break
             time.sleep(self.sleep)
         if not frames:
             raise RuntimeError("No equity data returned from provider.")
