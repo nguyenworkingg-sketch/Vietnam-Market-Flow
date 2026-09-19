@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
 from marketflow.backtest import run_research_suite
+from marketflow.dashboard import render_dashboard
 
 
 def _load_panel() -> pd.DataFrame:
@@ -32,6 +33,46 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     for name in ['deciles', 'stage_entries', 'ic_daily', 'ic_summary', 'summary']:
         suite[name].to_csv(out/f'{name}.csv', index=False)
+
+    # Re-render the final published dashboard after research diagnostics exist,
+    # so the web page includes validation charts from the same production run.
+    latest = pd.read_csv(ROOT/'outputs'/'scores_latest.csv', parse_dates=['date'])
+    regime = pd.read_csv(ROOT/'outputs'/'market_regime.csv', parse_dates=['date'])
+    latest_date = pd.to_datetime(latest['date']).max()
+    reg_latest_df = regime[pd.to_datetime(regime['date']).eq(latest_date)]
+    reg_latest = reg_latest_df.iloc[-1].to_dict() if not reg_latest_df.empty else {}
+
+    scored = panel[panel['leadership_score'].notna()].copy()
+    scored['date'] = pd.to_datetime(scored['date'])
+    sector_history = (scored[['date','sector','sector_score']]
+                      .dropna(subset=['sector','sector_score'])
+                      .groupby(['date','sector'], as_index=False)['sector_score']
+                      .median()
+                      .sort_values(['sector','date']))
+    sector_history['acceleration'] = sector_history.groupby('sector')['sector_score'].diff(5)
+
+    bt_payload = {
+        'summary': suite['summary'],
+        'deciles': suite['deciles'],
+        'ic_daily': suite['ic_daily'],
+        'stage_entries': suite['stage_entries'],
+        'ic_summary': suite['ic_summary'],
+    }
+    render_dashboard(
+        latest, reg_latest, ROOT/'outputs'/'dashboard.html',
+        scored_history=scored,
+        regime_history=regime,
+        sector_history=sector_history,
+        backtest=bt_payload,
+    )
+    (ROOT/'docs').mkdir(exist_ok=True)
+    render_dashboard(
+        latest, reg_latest, ROOT/'docs'/'index.html',
+        scored_history=scored,
+        regime_history=regime,
+        sector_history=sector_history,
+        backtest=bt_payload,
+    )
 
     signal_rows = int(panel['leadership_score'].notna().sum())
     dates = pd.to_datetime(panel.loc[panel['leadership_score'].notna(), 'date'])
