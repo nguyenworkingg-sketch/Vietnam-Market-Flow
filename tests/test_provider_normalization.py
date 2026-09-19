@@ -30,20 +30,18 @@ def test_universe_filters_non_stocks_and_uses_configured_icb_level():
     p.symbols = None
     p.sector_level = 2
     p._listing_obj = lambda: object()
-    p._all_exchange_symbols = lambda listing: pd.DataFrame({
-        'ticker': ['AAA', 'BBB', 'E1VFVN30'],
-        'exchange': ['HOSE', 'HNX', 'HOSE'],
-        'type': ['STOCK', 'STOCK', 'ETF'],
+    p._current_market_groups = lambda listing: pd.DataFrame({
+        'ticker': ['AAA', 'BBB', 'CCC'],
+        'exchange': ['HOSE', 'HNX', 'UPCOM'],
     })
     p._industry_frame = lambda listing: pd.DataFrame({
-        'ticker': ['AAA', 'AAA', 'BBB', 'BBB', 'CCC', 'CCC'],
-        'icb_level': [2, 4, 2, 4, 2, 4],
-        'icb_name': ['Ngân hàng', 'Ngân hàng thương mại', 'Điện', 'Sản xuất điện', 'Công nghệ', 'Phần mềm'],
+        'ticker': ['AAA', 'AAA', 'BBB', 'BBB', 'CCC', 'CCC', 'FUNDX', 'FUNDX'],
+        'icb_level': [2, 4, 2, 4, 2, 4, 2, 4],
+        'icb_name': ['Ngân hàng', 'Ngân hàng thương mại', 'Điện', 'Sản xuất điện', 'Công nghệ', 'Phần mềm', 'Tài chính', 'Quỹ'],
     })
     out = p.get_universe().set_index('ticker')
-    # CCC exists in the company/industry source even though the exchange
-    # endpoint omitted it; the universe must retain it rather than silently
-    # deleting the name.
+    # FUNDX exists in the broad industry/company source but is absent from the
+    # current HOSE/HNX/UPCOM trading groups, so it must not be scanned.
     assert set(out.index) == {'AAA', 'BBB', 'CCC'}
     assert out.loc['AAA', 'sector'] == 'Ngân hàng'
     assert out.loc['BBB', 'sector'] == 'Điện'
