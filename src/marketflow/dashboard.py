@@ -110,7 +110,7 @@ def _rotation_svg(sectors: pd.DataFrame, width=980, height=440) -> str:
     return ''.join(chunks)
 
 
-def _line_svg(df: pd.DataFrame, series: list[tuple[str, str, str]], width=920, height=270, days=60) -> str:
+def _line_svg(df: pd.DataFrame, series: list[tuple[str, str, str]], width=920, height=270, days=126) -> str:
     if df is None or df.empty or 'date' not in df.columns:
         return "<div class='empty'>Chưa đủ dữ liệu lịch sử.</div>"
     x = df.copy()
@@ -309,7 +309,7 @@ def _sector_rank_leaders(latest: pd.DataFrame, sectors: pd.DataFrame, stocks_per
     return ''.join(chunks)
 
 
-def _sector_history_svg(sector_history: pd.DataFrame | None, top_sectors: list[str], width=920, height=290, days=40) -> str:
+def _sector_history_svg(sector_history: pd.DataFrame | None, top_sectors: list[str], width=920, height=290, days=126) -> str:
     if sector_history is None or sector_history.empty or not top_sectors:
         return "<div class='empty'>Chưa đủ lịch sử ngành.</div>"
     x=sector_history.copy()
@@ -389,7 +389,7 @@ def _backtest_decile_svg(deciles: pd.DataFrame | None, horizon=20, width=620, he
     return ''.join(chunks)
 
 
-def _ic_svg(ic_daily: pd.DataFrame | None, horizon=20, width=620, height=270, days=80) -> str:
+def _ic_svg(ic_daily: pd.DataFrame | None, horizon=20, width=620, height=270, days=126) -> str:
     if ic_daily is None or ic_daily.empty:
         return "<div class='empty'>IC chưa đủ dữ liệu.</div>"
     d=ic_daily[(ic_daily['horizon']==horizon)&(ic_daily['metric']=='market_alpha')].copy()
@@ -544,10 +544,10 @@ def render_dashboard(
     market_chart=_line_svg(
         rh if rh is not None else pd.DataFrame(),
         [('market_score','Điểm thị trường','cyan'),('breadth_ma20_pct','Breadth MA20','green'),('breadth_ma50_pct','Breadth MA50','blue')],
-        days=60,
+        days=126,
     )
     sector_rotation=_rotation_svg(sectors)
-    sector_history_chart=_sector_history_svg(sector_history,top_sectors)
+    sector_history_chart=_sector_history_svg(sector_history,top_sectors,days=126)
     sector_rank_leaders=_sector_rank_leaders(latest,sectors,stocks_per_sector=5)
     scatter=_scatter_svg(latest)
     hist=_histogram_svg(latest['leadership_score'])
@@ -555,7 +555,7 @@ def render_dashboard(
     readout=_signal_readout(latest,rh,sectors)
     bt_cards=_backtest_cards(bt.get('summary'))
     bt_decile=_backtest_decile_svg(bt.get('deciles'),horizon=20)
-    bt_ic=_ic_svg(bt.get('ic_daily'),horizon=20)
+    bt_ic=_ic_svg(bt.get('ic_daily'),horizon=20,days=126)
 
     html_doc=f"""<!doctype html><html lang='vi'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='color-scheme' content='dark'><title>Vietnam Market Flow — Research Dashboard</title><style>{css}</style></head><body><div class='shell'>
     <div class='topline'><div><div class='eyebrow'>Finsuccess · Market Intelligence</div><h1>Vietnam Market Flow</h1><div class='muted'>Theo dõi trạng thái thị trường, luân chuyển ngành và độ rộng của nhóm cổ phiếu dẫn dắt.</div></div><div class='tag'>Dữ liệu đến {html.escape(dt)}</div></div>
@@ -571,7 +571,7 @@ def render_dashboard(
     </div>
 
     <div class='grid-2 section'>
-      <div class='panel'><div class='section-head'><div><div class='section-kicker'>Market pulse</div><h2>Xu hướng regime & độ rộng</h2></div><span class='tag'>60 phiên</span></div>{market_chart}<div class='note'>Điểm thị trường và breadth cùng quy về thang 0–100 để quan sát hướng đi và phân kỳ.</div></div>
+      <div class='panel'><div class='section-head'><div><div class='section-kicker'>Market pulse</div><h2>Xu hướng regime & độ rộng</h2></div><span class='tag'>6 tháng · ~126 phiên</span></div>{market_chart}<div class='note'>Điểm thị trường và breadth cùng quy về thang 0–100 để quan sát hướng đi và phân kỳ.</div></div>
       <div class='panel'><div class='section-kicker'>Signal breadth</div><h2>Cấu trúc tín hiệu hiện tại</h2>{stage_chart}<h3>Điểm đáng chú ý</h3>{readout}</div>
     </div>
 
@@ -600,7 +600,7 @@ def render_dashboard(
       <div class='note' style='margin-bottom:10px'>Ngành được xếp hạng theo Sector Score giảm dần; trong từng ngành, cổ phiếu được xếp theo Leadership Score. Bấm vào từng ngành để xem top 5 cổ phiếu.</div>
       {sector_rank_leaders}
     </div>
-    <div class='panel section'><div class='section-head'><div><div class='section-kicker'>Sector trend</div><h2>Top ngành qua thời gian</h2></div><span class='tag'>40 phiên</span></div>{sector_history_chart}</div>
+    <div class='panel section'><div class='section-head'><div><div class='section-kicker'>Sector trend</div><h2>Top ngành qua thời gian</h2></div><span class='tag'>6 tháng · ~126 phiên</span></div>{sector_history_chart}</div>
 
     <div class='section' id='stocks'><div class='section-head'><div><div class='section-kicker'>Leadership map</div><h2>Cấu trúc cổ phiếu dẫn dắt</h2></div></div></div>
     <div class='grid-2'>
