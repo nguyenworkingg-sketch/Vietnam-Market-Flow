@@ -219,7 +219,7 @@ class SupabaseRESTStore:
         self._batch_post('mf_universe', rows, on_conflict='ticker')
 
     def sync_scores(self, scored: pd.DataFrame) -> None:
-        cols = ['date','ticker','sector','rs_score','flow_score','trend_score','sector_score','leadership_score','acceleration','stage']
+        cols = ['date','ticker','sector','rs_score','flow_score','trend_score','sector_score','leadership_score','short_momentum_score','long_momentum_score','acceleration','stage']
         x = scored[[c for c in cols if c in scored.columns]].copy()
         rows = _records(x, rename={'date':'trade_date'})
         self._batch_post('mf_scores_daily', rows, on_conflict='trade_date,ticker')

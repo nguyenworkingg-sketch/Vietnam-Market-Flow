@@ -15,6 +15,8 @@ def _latest():
         'ticker': ['AAA','BBB','CCC','DDD','EEE','FFF'],
         'sector': ['Ngân hàng','Ngân hàng','Công nghệ','Điện','BĐS','BĐS'],
         'leadership_score': [92,85,78,68,55,48],
+        'short_momentum_score': [88,82,84,76,61,42],
+        'long_momentum_score': [86,83,79,81,58,45],
         'acceleration': [8,2,12,11,-4,-14],
         'rs_score': [90,82,80,72,50,45],
         'flow_score': [88,75,84,68,48,40],
@@ -55,12 +57,19 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
         'mean_spearman_ic':[.04,.07,.09],
     })
 
+    previous = latest.copy()
+    previous['date'] = pd.Timestamp('2026-09-17')
+    previous['short_momentum_score'] = [75,82,76,76,61,42]
+    previous['long_momentum_score'] = [86,77,79,74,58,45]
+    scored_history = pd.concat([previous, latest], ignore_index=True)
+
     out = tmp_path/'dashboard.html'
     render_dashboard(
         latest,
         {'regime':'RISK_ON','market_score':71,'breadth_ma20':.68,'breadth_ma50':.61,
          'coverage_stocks':190,'coverage_reference':200},
         out,
+        scored_history=scored_history,
         regime_history=regime,
         sector_history=sectors,
         backtest={'deciles':deciles,'ic_daily':ic,'summary':summary},
@@ -68,6 +77,9 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     text = out.read_text(encoding='utf-8')
     assert 'Xu hướng regime & độ rộng' in text
     assert 'Luân chuyển ngành' in text
+    assert 'Cơ hội mới vào Top hôm nay' in text
+    assert 'Model Portfolio — 10 cổ phiếu mạnh' in text
+    assert 'SM ngắn hạn' in text
     assert 'Xếp hạng ngành & cổ phiếu dẫn dắt' in text
     assert 'Bấm vào từng ngành để xem top 5 cổ phiếu' in text
     assert 'AAA' in text

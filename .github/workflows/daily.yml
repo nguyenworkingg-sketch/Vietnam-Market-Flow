@@ -101,4 +101,7 @@ jobs:
             outputs/dashboard.html
             outputs/scores_latest.csv
             outputs/market_regime.csv
+            outputs/opportunities_short_latest.csv
+            outputs/opportunities_long_latest.csv
+            outputs/model_portfolio_10.csv
             outputs/backtest/

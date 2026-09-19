@@ -6,6 +6,8 @@ import math
 import numpy as np
 import pandas as pd
 
+from .selection import detect_opportunity_entries, build_model_portfolio
+
 
 DISPLAY = {
     'ticker': 'Mã',
@@ -18,6 +20,14 @@ DISPLAY = {
     'sector_score': 'Sức mạnh ngành',
     'stage': 'Giai đoạn',
     'members': 'Số mã',
+    'short_momentum_score': 'SM ngắn hạn',
+    'long_momentum_score': 'SM dài hạn',
+    'prev_short_momentum_score': 'SM NH phiên trước',
+    'prev_long_momentum_score': 'SM DH phiên trước',
+    'portfolio_rank': 'Hạng',
+    'sector_rank': 'Hạng ngành',
+    'portfolio_score': 'Điểm Port',
+    'weight': 'Tỷ trọng %',
 }
 
 STAGE_VI = {
@@ -453,6 +463,7 @@ def render_dashboard(
     regime_history: pd.DataFrame | None = None,
     sector_history: pd.DataFrame | None = None,
     backtest: dict[str, pd.DataFrame] | None = None,
+    opportunity_cfg: dict | None = None,
 ):
     latest=latest.copy()
     leaders = latest.sort_values('leadership_score', ascending=False)
@@ -481,6 +492,24 @@ def render_dashboard(
 
     top_sectors=sectors.head(5)['sector'].astype(str).tolist()
     bt=backtest or {}
+    opp_cfg=opportunity_cfg or {}
+    short_threshold=float(opp_cfg.get('short_threshold',80))
+    long_threshold=float(opp_cfg.get('long_threshold',80))
+    min_sector_score=float(opp_cfg.get('min_sector_score',50))
+    portfolio_size=int(opp_cfg.get('portfolio_size',10))
+    portfolio_sector_cap=int(opp_cfg.get('portfolio_sector_cap',2))
+    short_entries,long_entries=detect_opportunity_entries(
+        scored_history if scored_history is not None else pd.DataFrame(),
+        short_threshold=short_threshold,
+        long_threshold=long_threshold,
+        min_sector_score=min_sector_score,
+    )
+    model_portfolio=build_model_portfolio(
+        latest,
+        size=portfolio_size,
+        sector_cap=portfolio_sector_cap,
+    )
+    opportunity_count=len(short_entries)+len(long_entries)
 
     css = """
     :root{
@@ -506,6 +535,7 @@ def render_dashboard(
     table.data{width:100%;border-collapse:collapse;font-size:12px}table.data th,table.data td{padding:8px 8px;border-bottom:1px solid rgba(32,49,76,.66);text-align:right;white-space:nowrap}table.data th:first-child,table.data td:first-child,table.data th:nth-child(2),table.data td:nth-child(2){text-align:left}table.data th{color:#91a5c2;font-weight:650;background:rgba(255,255,255,.014);position:sticky;top:0}.table-wrap{overflow:auto;max-height:515px}
     .mini-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mini-card{padding:13px}.mini-title{font-size:13px;font-weight:750;margin-bottom:9px}.mini-grid{display:grid;grid-template-columns:1fr auto;gap:5px 10px;font-size:11px;color:var(--muted)}.mini-grid b{color:#e5eefc;font-variant-numeric:tabular-nums}
     .readout{margin:0;padding-left:18px;color:#c8d5e8;font-size:13px;line-height:1.65}.readout b{color:white}.disclaimer{margin-top:20px;padding:14px 16px;border:1px solid #2d3d58;background:#0a1423;border-radius:11px;font-size:11px;color:#8da0bc;line-height:1.55}
+    .opportunity-shell{border:1px solid #34506f;background:linear-gradient(180deg,rgba(16,37,57,.98),rgba(10,23,39,.98));box-shadow:0 0 0 1px rgba(84,215,239,.05),0 18px 44px rgba(0,0,0,.18)}.opportunity-shell.has-alert{border-color:#3f856c;box-shadow:0 0 0 1px rgba(69,212,131,.10),0 18px 44px rgba(0,0,0,.20)}.opportunity-title{display:flex;align-items:center;gap:9px}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#66778f}.has-alert .pulse-dot{background:var(--green);box-shadow:0 0 0 5px rgba(69,212,131,.10)}.count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;border-radius:999px;padding:0 7px;background:#142943;border:1px solid #2f4c70;color:#dcecff;font-size:11px;font-weight:750}.has-alert .count-badge{background:rgba(69,212,131,.10);border-color:#34745e;color:#8ff0b5}.opp-col{min-width:0}.opp-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px;font-weight:750}.opp-threshold{font-size:10px;color:var(--muted);font-weight:500}.portfolio-note{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 12px}.portfolio-pill{border:1px solid #2b405f;background:#0b1728;border-radius:9px;padding:8px 10px;font-size:11px;color:#aebdd2}.portfolio-pill b{display:block;color:#eef5ff;font-size:13px;margin-top:2px}
     details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:#aebdd2;font-size:12px}.method{font-size:12px;color:var(--muted);line-height:1.6}
     @media(max-width:1150px){.kpis{grid-template-columns:repeat(3,1fr)}.grid-2,.grid-even{grid-template-columns:1fr}.grid-3{grid-template-columns:1fr 1fr}}
     @media(max-width:680px){.shell{padding:17px 13px 35px}.topline{align-items:flex-start;flex-direction:column}.kpis{grid-template-columns:1fr 1fr}.grid-3,.mini-cards{grid-template-columns:1fr}.bar-row{grid-template-columns:110px 1fr 38px 42px}.nav{position:static}.big{font-size:23px}.sector-rank-row summary{grid-template-columns:38px 1fr 45px 45px}.sector-meter,.sector-leader{display:none}.sector-stocks{padding-left:12px}}
@@ -529,7 +559,7 @@ def render_dashboard(
 
     html_doc=f"""<!doctype html><html lang='vi'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='color-scheme' content='dark'><title>Vietnam Market Flow — Research Dashboard</title><style>{css}</style></head><body><div class='shell'>
     <div class='topline'><div><div class='eyebrow'>Finsuccess · Market Intelligence</div><h1>Vietnam Market Flow</h1><div class='muted'>Theo dõi trạng thái thị trường, luân chuyển ngành và độ rộng của nhóm cổ phiếu dẫn dắt.</div></div><div class='tag'>Dữ liệu đến {html.escape(dt)}</div></div>
-    <div class='nav'><a href='#market'>Thị trường</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
+    <div class='nav'><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
 
     <div class='kpis' id='market'>
       <div class='card'><div class='card-label'>Trạng thái</div><div class='big'>{html.escape(regime_text)}</div><div class='sub'>Regime tổng hợp</div></div>
@@ -543,6 +573,22 @@ def render_dashboard(
     <div class='grid-2 section'>
       <div class='panel'><div class='section-head'><div><div class='section-kicker'>Market pulse</div><h2>Xu hướng regime & độ rộng</h2></div><span class='tag'>60 phiên</span></div>{market_chart}<div class='note'>Điểm thị trường và breadth cùng quy về thang 0–100 để quan sát hướng đi và phân kỳ.</div></div>
       <div class='panel'><div class='section-kicker'>Signal breadth</div><h2>Cấu trúc tín hiệu hiện tại</h2>{stage_chart}<h3>Điểm đáng chú ý</h3>{readout}</div>
+    </div>
+
+    <div class='panel section opportunity-shell {'has-alert' if opportunity_count else ''}' id='opportunities'>
+      <div class='section-head'><div><div class='section-kicker'>Daily opportunity monitor</div><div class='opportunity-title'><span class='pulse-dot'></span><h2 style='margin:0'>Cơ hội mới vào Top hôm nay</h2><span class='count-badge'>{opportunity_count}</span></div></div><span class='tag'>Cross threshold</span></div>
+      <div class='note' style='margin-bottom:12px'>Chỉ hiện mã vừa vượt ngưỡng trong phiên mới nhất và có Sector Score ≥ {min_sector_score:.0f}. Đây là screen độc lập của Vietnam Market Flow, không dùng công thức của nền tảng khác.</div>
+      <div class='grid-even'>
+        <div class='opp-col'><div class='opp-label'><span>Ngắn hạn</span><span class='opp-threshold'>SM ngắn hạn ≥ {short_threshold:.0f}</span></div><div class='table-wrap'>{_table(short_entries,['ticker','sector','short_momentum_score','prev_short_momentum_score','leadership_score','acceleration','flow_score','sector_score','stage'],15)}</div></div>
+        <div class='opp-col'><div class='opp-label'><span>Dài hạn</span><span class='opp-threshold'>SM dài hạn ≥ {long_threshold:.0f}</span></div><div class='table-wrap'>{_table(long_entries,['ticker','sector','long_momentum_score','prev_long_momentum_score','leadership_score','acceleration','trend_score','sector_score','stage'],15)}</div></div>
+      </div>
+    </div>
+
+    <div class='panel section' id='portfolio'>
+      <div class='section-head'><div><div class='section-kicker'>Sector-first model portfolio</div><h2>Model Portfolio — 10 cổ phiếu mạnh</h2></div><span class='tag'>Equal weight</span></div>
+      <div class='portfolio-note'><div class='portfolio-pill'>Bước 1<b>Xếp hạng ngành</b></div><div class='portfolio-pill'>Bước 2<b>Chọn mã mạnh trong ngành</b></div><div class='portfolio-pill'>Bước 3<b>Tối đa {portfolio_sector_cap} mã/ngành</b></div></div>
+      <div class='note' style='margin-bottom:10px'>Port nghiên cứu ưu tiên ngành mạnh trước, sau đó chọn cổ phiếu có Leadership + SM ngắn hạn + SM dài hạn + Flow tốt nhất. Tỷ trọng mặc định chia đều; không phải danh mục tối ưu hóa rủi ro/lợi nhuận.</div>
+      <div class='table-wrap'>{_table(model_portfolio,['portfolio_rank','ticker','sector','sector_rank','sector_score','leadership_score','short_momentum_score','long_momentum_score','portfolio_score','weight','stage'],portfolio_size)}</div>
     </div>
 
     <div class='section' id='sectors'><div class='section-head'><div><div class='section-kicker'>Sector rotation</div><h2>Luân chuyển ngành</h2></div><span class='tag'>Strength × Acceleration</span></div></div>
@@ -576,6 +622,6 @@ def render_dashboard(
     </div>
 
     <div class='disclaimer'>Dashboard là công cụ nghiên cứu định lượng, không phải tín hiệu mua/bán tự động. “Dòng tiền” trong V1 là proxy từ giá, khối lượng và giá trị giao dịch, không phải số liệu mua ròng của tổ chức. Backtest hiện dùng universe sản xuất hiện tại nên chưa loại bỏ hoàn toàn survivorship bias; kết quả kiểm định nên được xem là diagnostic cho đến khi hoàn thành point-in-time universe và backfill mã hủy niêm yết.</div>
-    <details id='method'><summary>Phương pháp & cách đọc dashboard</summary><div class='method'><p><b>Leadership Score</b> tổng hợp Relative Strength, Flow proxy, Trend quality và Sector confirmation. <b>Acceleration</b> là thay đổi điểm trong 5 phiên. <b>Emerging</b> yêu cầu điểm nền đủ cao và tăng tốc mạnh; <b>Fading</b> phản ánh giảm động lượng hoặc tụt dưới ngưỡng điểm.</p><p>Sector Rotation được dùng để phân biệt cổ phiếu mạnh nhờ riêng lẻ với cổ phiếu được xác nhận bởi ngành. Regime tổng hợp market breadth, return và liquidity để mô tả bối cảnh, không dùng như dự báo chắc chắn cho VN-Index.</p></div></details>
+    <details id='method'><summary>Phương pháp & cách đọc dashboard</summary><div class='method'><p><b>Leadership Score</b> tổng hợp Relative Strength, Flow proxy, Trend quality và Sector confirmation. <b>Acceleration</b> là thay đổi điểm trong 5 phiên. <b>SM ngắn hạn</b> nhấn mạnh RS 5/20 phiên, thanh khoản, MA20 slope và participation; <b>SM dài hạn</b> nhấn mạnh RS 60/120 phiên, MA50 slope, vị trí so với MA50 và đỉnh 52 tuần. Hai điểm đều là percentile cross-section 0–100.</p><p><b>Cơ hội mới</b> chỉ bật khi điểm hôm nay vượt ngưỡng 80 từ dưới ngưỡng ở phiên hợp lệ trước và ngành có Sector Score đủ mạnh. <b>Model Portfolio 10</b> đi theo funnel ngành → cổ phiếu: ngành xếp theo Sector Score, cổ phiếu trong ngành xếp theo Leadership/SM/Flow, tối đa {portfolio_sector_cap} mã mỗi ngành và chia đều tỷ trọng.</p><p>Sector Rotation được dùng để phân biệt cổ phiếu mạnh nhờ riêng lẻ với cổ phiếu được xác nhận bởi ngành. Regime tổng hợp market breadth, return và liquidity để mô tả bối cảnh, không dùng như dự báo chắc chắn cho VN-Index.</p></div></details>
     </div></body></html>"""
     Path(out_path).write_text(html_doc,encoding='utf-8')
