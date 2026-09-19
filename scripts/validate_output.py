@@ -28,7 +28,7 @@ def main() -> None:
     if scores.duplicated(['date', 'ticker']).any():
         fail('duplicate ticker/date rows in latest snapshot')
 
-    score_cols = ['rs_score','flow_score','trend_score','sector_score','leadership_score']
+    score_cols = ['rs_score','flow_score','trend_score','sector_score','leadership_score','short_momentum_score','long_momentum_score']
     for col in score_cols:
         if col not in scores:
             fail(f'missing {col}')
