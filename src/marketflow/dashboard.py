@@ -6,7 +6,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from .selection import detect_opportunity_entries, build_model_portfolio
+from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates
 
 
 DISPLAY = {
@@ -28,6 +28,11 @@ DISPLAY = {
     'sector_rank': 'Hạng ngành',
     'portfolio_score': 'Điểm Port',
     'weight': 'Tỷ trọng %',
+    'entry_rank': 'Hạng',
+    'entry_score': 'Điểm mở vị thế',
+    'macd_status': 'MACD',
+    'ma_status': 'MA cross',
+    'technical_setup': 'Technical setup',
 }
 
 STAGE_VI = {
@@ -509,6 +514,15 @@ def render_dashboard(
         size=portfolio_size,
         sector_cap=portfolio_sector_cap,
     )
+    entry_candidates=build_entry_candidates(
+        latest,
+        top_n=int(opp_cfg.get('entry_top_n',3)),
+        min_sector_score=float(opp_cfg.get('entry_min_sector_score',50)),
+        require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive',True)),
+        require_ma_bull=bool(opp_cfg.get('entry_require_ma_bull',True)),
+        ma_cross_bonus=float(opp_cfg.get('entry_ma_cross_bonus',4)),
+        bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus',6)),
+    )
     opportunity_count=len(short_entries)+len(long_entries)
 
     css = """
@@ -559,7 +573,15 @@ def render_dashboard(
 
     html_doc=f"""<!doctype html><html lang='vi'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><meta name='color-scheme' content='dark'><title>Vietnam Market Flow — Research Dashboard</title><style>{css}</style></head><body><div class='shell'>
     <div class='topline'><div><div class='eyebrow'>Finsuccess · Market Intelligence</div><h1>Vietnam Market Flow</h1><div class='muted'>Theo dõi trạng thái thị trường, luân chuyển ngành và độ rộng của nhóm cổ phiếu dẫn dắt.</div></div><div class='tag'>Dữ liệu đến {html.escape(dt)}</div></div>
-    <div class='nav'><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
+
+    <div class='panel entry-panel' id='entry-top3'>
+      <div class='section-head'><div><div class='section-kicker'>Priority setup</div><h2>Top 3 ứng viên mở vị thế — Model</h2></div><span class='tag'>Strict technical gate</span></div>
+      <div class='entry-rule'><span class='rule-pill'>MACD &gt; 0 + Histogram &gt; 0</span><span class='rule-pill'>MA20 &gt; MA50</span><span class='rule-pill'>Ngành đủ mạnh</span><span class='rule-pill'>Bonus: MA cross gần đây</span><span class='rule-pill'>Bonus: breakout sau BB squeeze</span></div>
+      <div class='note' style='margin-bottom:10px'>Chỉ xếp hạng các mã qua đủ bộ lọc kỹ thuật bắt buộc. Breakout sau giai đoạn Bollinger Band siết là điểm cộng, không phải điều kiện bắt buộc. Nếu ít hơn 3 mã đạt chuẩn, bảng sẽ hiển thị ít hơn 3 thay vì nới điều kiện.</div>
+      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_score','sector_score','leadership_score','short_momentum_score','long_momentum_score','macd_status','ma_status','technical_setup','stage'],3)}</div>
+    </div>
+
+    <div class='nav'><a href='#entry-top3'>Top 3 setup</a><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
 
     <div class='kpis' id='market'>
       <div class='card'><div class='card-label'>Trạng thái</div><div class='big'>{html.escape(regime_text)}</div><div class='sub'>Regime tổng hợp</div></div>
