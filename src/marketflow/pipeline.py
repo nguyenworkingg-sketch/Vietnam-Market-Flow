@@ -9,7 +9,7 @@ from .scoring import build_scores, add_stage
 from .regime import market_regime
 from .storage import DuckStore
 from .dashboard import render_dashboard
-from .selection import detect_opportunity_entries, build_model_portfolio
+from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates
 from .supabase_store import SupabaseRESTStore
 
 
@@ -183,9 +183,19 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             size=int(opp_cfg.get('portfolio_size', 10)),
             sector_cap=int(opp_cfg.get('portfolio_sector_cap', 2)),
         )
+        entry_candidates = build_entry_candidates(
+            latest,
+            top_n=int(opp_cfg.get('entry_top_n', 3)),
+            min_sector_score=float(opp_cfg.get('entry_min_sector_score', 50)),
+            require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive', True)),
+            require_ma_bull=bool(opp_cfg.get('entry_require_ma_bull', True)),
+            ma_cross_bonus=float(opp_cfg.get('entry_ma_cross_bonus', 4)),
+            bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus', 6)),
+        )
         short_entries.to_csv(out / 'opportunities_short_latest.csv', index=False)
         long_entries.to_csv(out / 'opportunities_long_latest.csv', index=False)
         portfolio.to_csv(out / 'model_portfolio_10.csv', index=False)
+        entry_candidates.to_csv(out / 'top3_entry_candidates.csv', index=False)
 
         regime.to_csv(out / 'market_regime.csv', index=False)
         render_dashboard(
