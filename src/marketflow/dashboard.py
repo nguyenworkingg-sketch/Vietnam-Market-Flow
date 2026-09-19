@@ -238,6 +238,67 @@ def _sector_bars(sectors: pd.DataFrame, n=10) -> str:
     return ''.join(rows)
 
 
+def _sector_rank_leaders(latest: pd.DataFrame, sectors: pd.DataFrame, stocks_per_sector: int = 5) -> str:
+    if latest.empty or sectors.empty:
+        return "<div class='empty'>Chưa có dữ liệu xếp hạng ngành.</div>"
+
+    ranked = sectors.sort_values(['sector_score','acceleration'], ascending=False).reset_index(drop=True)
+    ranked['sector_rank'] = ranked.index + 1
+    chunks = ["<div class='sector-rank-list'>"]
+
+    for _, sec in ranked.iterrows():
+        sector = str(sec['sector'])
+        stocks = (latest[latest['sector'].astype(str).eq(sector)]
+                  .sort_values(['leadership_score','acceleration'], ascending=False)
+                  .head(stocks_per_sector)
+                  .copy())
+        if stocks.empty:
+            continue
+
+        leader = stocks.iloc[0]
+        score = float(sec['sector_score'])
+        acc = float(sec.get('acceleration', 0) or 0)
+        members = int(sec.get('members', len(stocks)) or 0)
+        rank = int(sec['sector_rank'])
+        acc_cls = 'pos' if acc > 0 else ('neg' if acc < 0 else '')
+        rank_cls = 'rank-top' if rank <= 3 else ('rank-mid' if rank <= 8 else 'rank-low')
+        leader_stage = STAGE_VI.get(str(leader.get('stage','NEUTRAL')), str(leader.get('stage','NEUTRAL')))
+
+        stock_chips = []
+        for i, (_, row) in enumerate(stocks.iterrows(), start=1):
+            ticker = html.escape(str(row['ticker']))
+            lscore = float(row.get('leadership_score', np.nan))
+            delta = float(row.get('acceleration', 0) or 0)
+            stage = STAGE_VI.get(str(row.get('stage','NEUTRAL')), str(row.get('stage','NEUTRAL')))
+            chip_cls = 'stock-chip best' if i == 1 else 'stock-chip'
+            stock_chips.append(
+                f"<div class='{chip_cls}' title='{stage} · tăng tốc {delta:+.1f}'>"
+                f"<span class='chip-rank'>#{i}</span><b>{ticker}</b>"
+                f"<span class='chip-score'>{lscore:.1f}</span>"
+                "</div>"
+            )
+
+        chunks.append(
+            "<details class='sector-rank-row'>"
+            "<summary>"
+            f"<span class='sector-rank {rank_cls}'>#{rank}</span>"
+            f"<span class='sector-title'>{html.escape(sector)}<small>{members} mã đủ điều kiện</small></span>"
+            f"<span class='sector-meter'><span class='sector-meter-fill' style='width:{max(0,min(100,score)):.1f}%'></span></span>"
+            f"<span class='sector-strength'>{score:.1f}</span>"
+            f"<span class='sector-acc {acc_cls}'>{acc:+.1f}</span>"
+            f"<span class='sector-leader'><b>{html.escape(str(leader['ticker']))}</b><small>{float(leader['leadership_score']):.1f} · {leader_stage}</small></span>"
+            "</summary>"
+            "<div class='sector-stocks'>"
+            "<div class='sector-stocks-label'>Xếp hạng cổ phiếu trong ngành</div>"
+            f"<div class='stock-chips'>{''.join(stock_chips)}</div>"
+            "</div>"
+            "</details>"
+        )
+
+    chunks.append("</div>")
+    return ''.join(chunks)
+
+
 def _sector_history_svg(sector_history: pd.DataFrame | None, top_sectors: list[str], width=920, height=290, days=40) -> str:
     if sector_history is None or sector_history.empty or not top_sectors:
         return "<div class='empty'>Chưa đủ lịch sử ngành.</div>"
@@ -440,13 +501,14 @@ def render_dashboard(
     .dot{fill:#7287a7;fill-opacity:.55}.dot.leader{fill:var(--green);fill-opacity:.76}.dot.emerging{fill:var(--amber);fill-opacity:.78}.dot.fading{fill:var(--rose);fill-opacity:.68}
     .histbar{fill:#4c8fcf;opacity:.8}.alpha-pos{fill:var(--green);opacity:.83}.alpha-neg{fill:var(--rose);opacity:.8}
     .bar-row{display:grid;grid-template-columns:minmax(120px,1fr) 2.2fr 46px 48px;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid rgba(32,49,76,.55)}.bar-name{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.bar-track{height:7px;border-radius:999px;background:#15243a;overflow:hidden}.bar-fill{height:100%;background:linear-gradient(90deg,#387fae,var(--cyan));border-radius:999px}.bar-score,.bar-delta{text-align:right;font-variant-numeric:tabular-nums;font-size:12px}.bar-delta.pos{color:var(--green)}.bar-delta.neg{color:var(--rose)}
+    .sector-rank-list{display:flex;flex-direction:column;gap:7px}.sector-rank-row{margin:0;border:1px solid rgba(32,49,76,.72);border-radius:10px;background:rgba(7,16,29,.35);padding:0;overflow:hidden}.sector-rank-row summary{display:grid;grid-template-columns:46px minmax(170px,1.1fr) minmax(120px,1.6fr) 52px 52px minmax(135px,1fr);gap:10px;align-items:center;padding:11px 12px;border:0;list-style:none}.sector-rank-row summary::-webkit-details-marker{display:none}.sector-rank-row[open]{border-color:#334d70;background:rgba(12,26,44,.65)}.sector-rank{font-weight:800;font-variant-numeric:tabular-nums;font-size:13px;color:#9fb1cb}.sector-rank.rank-top{color:var(--green)}.sector-rank.rank-mid{color:var(--cyan)}.sector-rank.rank-low{color:#778aa6}.sector-title{font-weight:700;font-size:12px;min-width:0}.sector-title small,.sector-leader small{display:block;color:var(--muted);font-size:10px;font-weight:500;margin-top:2px}.sector-meter{height:7px;background:#15243a;border-radius:999px;overflow:hidden}.sector-meter-fill{display:block;height:100%;background:linear-gradient(90deg,#356b92,var(--cyan));border-radius:999px}.sector-strength,.sector-acc{font-size:12px;text-align:right;font-variant-numeric:tabular-nums}.sector-acc.pos{color:var(--green)}.sector-acc.neg{color:var(--rose)}.sector-leader{text-align:left;font-size:12px;color:#eef6ff}.sector-stocks{border-top:1px solid rgba(32,49,76,.6);padding:10px 12px 12px 58px}.sector-stocks-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px}.stock-chips{display:flex;flex-wrap:wrap;gap:7px}.stock-chip{display:grid;grid-template-columns:auto auto auto;gap:5px;align-items:center;border:1px solid #2a3d5c;border-radius:8px;background:#0b1728;padding:6px 8px;font-size:11px}.stock-chip.best{border-color:#2f7860;background:rgba(69,212,131,.08)}.chip-rank{color:#8094b0}.chip-score{color:var(--cyan);font-variant-numeric:tabular-nums}
     .stage-stack{display:flex;height:20px;background:#152238;border-radius:7px;overflow:hidden;margin:8px 0 14px}.stage-seg{height:100%}.st-leader{background:var(--green)}.st-mature{background:var(--cyan)}.st-emerging{background:var(--amber)}.st-neutral{background:#64748b}.st-fading{background:var(--rose)}.stage-legend{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}.stage-item{display:grid;grid-template-columns:10px 1fr auto auto;gap:7px;align-items:center;font-size:11px;color:#c1cee1}.stage-dot{width:8px;height:8px;border-radius:50%}.stage-item small{color:var(--muted);min-width:28px;text-align:right}
     table.data{width:100%;border-collapse:collapse;font-size:12px}table.data th,table.data td{padding:8px 8px;border-bottom:1px solid rgba(32,49,76,.66);text-align:right;white-space:nowrap}table.data th:first-child,table.data td:first-child,table.data th:nth-child(2),table.data td:nth-child(2){text-align:left}table.data th{color:#91a5c2;font-weight:650;background:rgba(255,255,255,.014);position:sticky;top:0}.table-wrap{overflow:auto;max-height:515px}
     .mini-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mini-card{padding:13px}.mini-title{font-size:13px;font-weight:750;margin-bottom:9px}.mini-grid{display:grid;grid-template-columns:1fr auto;gap:5px 10px;font-size:11px;color:var(--muted)}.mini-grid b{color:#e5eefc;font-variant-numeric:tabular-nums}
     .readout{margin:0;padding-left:18px;color:#c8d5e8;font-size:13px;line-height:1.65}.readout b{color:white}.disclaimer{margin-top:20px;padding:14px 16px;border:1px solid #2d3d58;background:#0a1423;border-radius:11px;font-size:11px;color:#8da0bc;line-height:1.55}
     details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:#aebdd2;font-size:12px}.method{font-size:12px;color:var(--muted);line-height:1.6}
     @media(max-width:1150px){.kpis{grid-template-columns:repeat(3,1fr)}.grid-2,.grid-even{grid-template-columns:1fr}.grid-3{grid-template-columns:1fr 1fr}}
-    @media(max-width:680px){.shell{padding:17px 13px 35px}.topline{align-items:flex-start;flex-direction:column}.kpis{grid-template-columns:1fr 1fr}.grid-3,.mini-cards{grid-template-columns:1fr}.bar-row{grid-template-columns:110px 1fr 38px 42px}.nav{position:static}.big{font-size:23px}}
+    @media(max-width:680px){.shell{padding:17px 13px 35px}.topline{align-items:flex-start;flex-direction:column}.kpis{grid-template-columns:1fr 1fr}.grid-3,.mini-cards{grid-template-columns:1fr}.bar-row{grid-template-columns:110px 1fr 38px 42px}.nav{position:static}.big{font-size:23px}.sector-rank-row summary{grid-template-columns:38px 1fr 45px 45px}.sector-meter,.sector-leader{display:none}.sector-stocks{padding-left:12px}}
     """
 
     market_chart=_line_svg(
@@ -456,6 +518,7 @@ def render_dashboard(
     )
     sector_rotation=_rotation_svg(sectors)
     sector_history_chart=_sector_history_svg(sector_history,top_sectors)
+    sector_rank_leaders=_sector_rank_leaders(latest,sectors,stocks_per_sector=5)
     scatter=_scatter_svg(latest)
     hist=_histogram_svg(latest['leadership_score'])
     stage_chart=_stage_distribution(latest)
@@ -486,6 +549,10 @@ def render_dashboard(
     <div class='grid-2'>
       <div class='panel'>{sector_rotation}<div class='note'>Trục ngang = sức mạnh ngành; trục dọc = thay đổi điểm trong 5 phiên; kích thước = số mã đủ điều kiện.</div></div>
       <div class='panel'><h2>Xếp hạng sức mạnh ngành</h2>{_sector_bars(sectors,12)}<div class='note'>Cột cuối là mức tăng/giảm điểm sức mạnh so với 5 phiên trước.</div></div>
+    </div>
+    <div class='panel section'><div class='section-head'><div><div class='section-kicker'>Sector ranking</div><h2>Xếp hạng ngành & cổ phiếu dẫn dắt</h2></div><span class='tag'>Rank theo Sector Score</span></div>
+      <div class='note' style='margin-bottom:10px'>Ngành được xếp hạng theo Sector Score giảm dần; trong từng ngành, cổ phiếu được xếp theo Leadership Score. Bấm vào từng ngành để xem top 5 cổ phiếu.</div>
+      {sector_rank_leaders}
     </div>
     <div class='panel section'><div class='section-head'><div><div class='section-kicker'>Sector trend</div><h2>Top ngành qua thời gian</h2></div><span class='tag'>40 phiên</span></div>{sector_history_chart}</div>
 
