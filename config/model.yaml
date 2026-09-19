@@ -46,6 +46,27 @@ weights:
     flow_score: 0.25
     trend_score: 0.20
     sector_score: 0.20
+  short_momentum:
+    rs_5: 0.25
+    rs_20: 0.25
+    value_ratio_20: 0.20
+    volume_ratio_20: 0.10
+    ma20_slope_5: 0.10
+    positive_day_share_20: 0.10
+  long_momentum:
+    rs_60: 0.30
+    rs_120: 0.20
+    ma50_distance: 0.15
+    ma50_slope_10: 0.15
+    high_252_proximity: 0.10
+    positive_day_share_20: 0.10
+
+opportunities:
+  short_threshold: 80
+  long_threshold: 80
+  min_sector_score: 50
+  portfolio_size: 10
+  portfolio_sector_cap: 2
 
 stages:
   leader_score: 85
