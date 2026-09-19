@@ -164,22 +164,36 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         except Exception:
             panel.to_csv(out / 'research_panel.csv', index=False)
 
-        regime.to_csv(out / 'market_regime.csv', index=False)
-        render_dashboard(latest, reg_latest, out / 'dashboard.html')
-        docs = root / 'docs'
-        docs.mkdir(exist_ok=True)
-        render_dashboard(latest, reg_latest, docs / 'index.html')
-
-        db = DuckStore(root / 'data' / 'market_flow.duckdb')
-        db.write_table('universe', universe)
-        db.write_table('features_scored', scored)
-        db.write_table('market_regime', regime)
-
         sector_daily = (scored[['date','sector','sector_score','breadth_ma20','breadth_ma50']]
                         .drop_duplicates(['date','sector'])
                         .sort_values(['sector','date']))
         accw = int(model.get('acceleration_window', 5))
         sector_daily['acceleration'] = sector_daily.groupby('sector')['sector_score'].diff(accw)
+
+        regime.to_csv(out / 'market_regime.csv', index=False)
+        render_dashboard(
+            latest,
+            reg_latest,
+            out / 'dashboard.html',
+            scored_history=scored,
+            regime_history=regime,
+            sector_history=sector_daily,
+        )
+        docs = root / 'docs'
+        docs.mkdir(exist_ok=True)
+        render_dashboard(
+            latest,
+            reg_latest,
+            docs / 'index.html',
+            scored_history=scored,
+            regime_history=regime,
+            sector_history=sector_daily,
+        )
+
+        db = DuckStore(root / 'data' / 'market_flow.duckdb')
+        db.write_table('universe', universe)
+        db.write_table('features_scored', scored)
+        db.write_table('market_regime', regime)
         db.write_table('sector_daily', sector_daily)
 
         if sb is not None:
