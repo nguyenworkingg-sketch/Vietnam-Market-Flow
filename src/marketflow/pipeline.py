@@ -206,6 +206,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             regime_history=regime,
             sector_history=sector_daily,
             opportunity_cfg=opp_cfg,
+            price_history=feat,
         )
         docs = root / 'docs'
         docs.mkdir(exist_ok=True)
@@ -217,6 +218,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             regime_history=regime,
             sector_history=sector_daily,
             opportunity_cfg=opp_cfg,
+            price_history=feat,
         )
 
         db = DuckStore(root / 'data' / 'market_flow.duckdb')
