@@ -9,6 +9,7 @@ from .scoring import build_scores, add_stage
 from .regime import market_regime
 from .storage import DuckStore
 from .dashboard import render_dashboard
+from .selection import detect_opportunity_entries, build_model_portfolio
 from .supabase_store import SupabaseRESTStore
 
 
@@ -139,7 +140,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         out = root / 'outputs'
         out.mkdir(exist_ok=True)
         latest.sort_values('leadership_score', ascending=False).to_csv(out / 'scores_latest.csv', index=False)
-        hist = scored[['date','ticker','sector','leadership_score','acceleration','rs_score','flow_score','trend_score','sector_score','stage']]
+        hist = scored[['date','ticker','sector','leadership_score','short_momentum_score','long_momentum_score','acceleration','rs_score','flow_score','trend_score','sector_score','stage']]
         try:
             hist.to_parquet(out / 'scores_history.parquet', index=False)
         except Exception:
@@ -157,7 +158,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         panel = feat[panel_cols].copy()
         panel['is_eligible'] = eligible.astype(bool).values
         panel['valid_cross_section'] = feat['date'].isin(valid_dates).values
-        score_cols = ['date','ticker','leadership_score','acceleration','rs_score','flow_score','trend_score','sector_score','stage']
+        score_cols = ['date','ticker','leadership_score','short_momentum_score','long_momentum_score','acceleration','rs_score','flow_score','trend_score','sector_score','stage']
         panel = panel.merge(scored[score_cols], on=['date','ticker'], how='left')
         try:
             panel.to_parquet(out / 'research_panel.parquet', index=False)
@@ -169,6 +170,22 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
                         .sort_values(['sector','date']))
         accw = int(model.get('acceleration_window', 5))
         sector_daily['acceleration'] = sector_daily.groupby('sector')['sector_score'].diff(accw)
+
+        opp_cfg = cfg.get('opportunities', {})
+        short_entries, long_entries = detect_opportunity_entries(
+            scored,
+            short_threshold=float(opp_cfg.get('short_threshold', 80)),
+            long_threshold=float(opp_cfg.get('long_threshold', 80)),
+            min_sector_score=float(opp_cfg.get('min_sector_score', 50)),
+        )
+        portfolio = build_model_portfolio(
+            latest,
+            size=int(opp_cfg.get('portfolio_size', 10)),
+            sector_cap=int(opp_cfg.get('portfolio_sector_cap', 2)),
+        )
+        short_entries.to_csv(out / 'opportunities_short_latest.csv', index=False)
+        long_entries.to_csv(out / 'opportunities_long_latest.csv', index=False)
+        portfolio.to_csv(out / 'model_portfolio_10.csv', index=False)
 
         regime.to_csv(out / 'market_regime.csv', index=False)
         render_dashboard(
