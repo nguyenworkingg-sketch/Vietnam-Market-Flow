@@ -242,8 +242,27 @@ def build_entry_signal_history(
         & pd.to_numeric(x['ret_5'], errors='coerce').le(float(max_ret5))
     )
 
-    signal = quality & anti_chase & fresh_trigger
-    e = x.loc[signal].copy()
+    raw_signal = quality & anti_chase & fresh_trigger
+
+    # One entry per active trend leg. Once a position is considered open, later
+    # triggers in the same run do not reset the entry date. A new entry is only
+    # allowed after the setup has materially reset.
+    reset = (
+        (pd.to_numeric(x['close'], errors='coerce') < pd.to_numeric(x.get('ma20'), errors='coerce'))
+        | pd.to_numeric(x['macd_hist'], errors='coerce').lt(0)
+        | pd.to_numeric(x['leadership_score'], errors='coerce').lt(55)
+    )
+    accepted = pd.Series(False, index=x.index)
+    for _, idxs in x.groupby('ticker', sort=False).groups.items():
+        active = False
+        for idx in idxs:
+            if active and bool(reset.loc[idx]):
+                active = False
+            if (not active) and bool(raw_signal.loc[idx]):
+                accepted.loc[idx] = True
+                active = True
+
+    e = x.loc[accepted].copy()
     if e.empty:
         return e
 
