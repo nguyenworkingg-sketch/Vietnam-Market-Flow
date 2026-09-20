@@ -6,7 +6,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
-from marketflow.dashboard import render_dashboard
+from marketflow.dashboard import render_dashboard, _candlestick_macd_svg
 
 
 def _latest():
@@ -142,8 +142,30 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert 'Điểm dẫn dắt × tăng tốc' in text
     assert 'Biểu đồ nến · Volume · MACD' in text
     assert 'MACD (12,26,9)' in text
-    assert 'ENTRY 18/09' in text
     assert 'Biểu đồ kỹ thuật toàn bộ cổ phiếu' in text
     assert "id='stock-chart-select'" in text
     assert 'Alpha theo decile' in text
     assert '<svg' in text
+
+
+def test_entry_marker_is_rendered_above_chart():
+    dates = pd.bdate_range(end='2026-09-18', periods=40)
+    rows = []
+    for i,d in enumerate(dates):
+        close = 20 + i*.08
+        rows.append({
+            'date': d, 'ticker': 'AAA',
+            'open': close-.05, 'high': close+.2, 'low': close-.2,
+            'close': close, 'volume': 1_000_000+i*1000,
+        })
+    px = pd.DataFrame(rows)
+    entry = pd.DataFrame([{
+        'entry_date': pd.Timestamp('2026-09-18'),
+        'ticker': 'AAA',
+        'entry_price': float(px.iloc[-1]['close']),
+        'entry_score': 88.5,
+        'entry_reason': 'Pullback resume + HTF confirm',
+    }])
+    svg = _candlestick_macd_svg(px, 'AAA', days=40, entry_events=entry)
+    assert 'ENTRY 18/09' in svg
+    assert 'Từ entry:' in svg
