@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import html
+import json
 import math
 import numpy as np
 import pandas as pd
 
-from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates
+from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history
 
 
 DISPLAY = {
@@ -29,10 +30,17 @@ DISPLAY = {
     'portfolio_score': 'Điểm Port',
     'weight': 'Tỷ trọng %',
     'entry_rank': 'Hạng',
-    'entry_score': 'Điểm mở vị thế',
+    'entry_score': 'Điểm entry',
+    'entry_score_current': 'Điểm entry hiện tại',
     'macd_status': 'MACD',
     'ma_status': 'MA cross',
     'technical_setup': 'Technical setup',
+    'entry_date': 'Ngày mở vị thế',
+    'entry_price': 'Giá entry',
+    'current_price': 'Giá hiện tại',
+    'since_entry_pct': 'Từ entry %',
+    'entry_age_sessions': 'Số phiên từ entry',
+    'entry_reason': 'Trigger',
 }
 
 STAGE_VI = {
@@ -59,7 +67,12 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
     if d.empty:
         return "<div class='empty'>Chưa có dữ liệu phù hợp.</div>"
     for c in d.select_dtypes(include='number').columns:
-        d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
+        if c == 'since_entry_pct':
+            d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{100*v:+.1f}%')
+        else:
+            d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
+    for c in [col for col in d.columns if 'date' in str(col).lower()]:
+        d[c] = pd.to_datetime(d[c], errors='coerce').map(lambda v: '' if pd.isna(v) else v.strftime('%d/%m/%Y'))
     if 'stage' in d.columns:
         d['stage'] = d['stage'].map(lambda x: STAGE_VI.get(str(x), str(x)))
     d = d.rename(columns={k: v for k, v in DISPLAY.items() if k in d.columns})
@@ -67,7 +80,7 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
 
 
 
-def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 126, width: int = 1400, height: int = 720, entry_score: float | None = None) -> str:
+def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 126, width: int = 1400, height: int = 720, entry_events: pd.DataFrame | None = None) -> str:
     if price_history is None or price_history.empty:
         return "<div class='empty'>Chưa có dữ liệu giá cho biểu đồ nến.</div>"
     required = {'date','ticker','open','high','low','close','volume'}
@@ -167,20 +180,40 @@ def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 
     chunks.append(f"<rect x='{width-right+2}' y='{ly-10:.1f}' width='64' height='20' rx='4' class='last-price-box'/>")
     chunks.append(f"<text x='{width-right+34}' y='{ly+4:.1f}' text-anchor='middle' class='last-price-text'>{last_close:,.1f}</text>")
 
-    # The ranked setup is actionable as of the latest completed session. Mark
-    # that exact candle rather than implying an earlier hindsight entry.
-    entry_x = sx(n-1)
-    marker_y = max(price_top+18, ly-58)
-    label_x = max(left+8, entry_x-178)
-    label_w = 166
-    chunks.append(f"<line x1='{entry_x:.1f}' y1='{ly-5:.1f}' x2='{entry_x:.1f}' y2='{marker_y+29:.1f}' class='entry-guide'/>")
-    chunks.append(
-        f"<polygon points='{entry_x-6:.1f},{ly-12:.1f} {entry_x+6:.1f},{ly-12:.1f} {entry_x:.1f},{ly-3:.1f}' class='entry-arrow'/>"
-    )
-    chunks.append(f"<rect x='{label_x:.1f}' y='{marker_y:.1f}' width='{label_w}' height='34' rx='6' class='entry-box'/>")
-    chunks.append(f"<text x='{label_x+9:.1f}' y='{marker_y+14:.1f}' class='entry-title'>MỞ VỊ THẾ · MODEL</text>")
-    score_txt = '' if entry_score is None or pd.isna(entry_score) else f" · Score {float(entry_score):.1f}"
-    chunks.append(f"<text x='{label_x+9:.1f}' y='{marker_y+27:.1f}' class='entry-sub'>{last_close:,.1f}{score_txt}</text>")
+    # Mark the dates when the model actually generated a causal entry event.
+    if entry_events is not None and not entry_events.empty:
+        ev = entry_events[entry_events['ticker'].astype(str).eq(str(ticker))].copy()
+        if not ev.empty:
+            ev['entry_date'] = pd.to_datetime(ev['entry_date']).dt.normalize()
+            date_to_i = {pd.Timestamp(d).normalize(): i for i,d in enumerate(x['date'])}
+            visible = ev[ev['entry_date'].isin(date_to_i.keys())].sort_values('entry_date').tail(4)
+            for k,(_,erow) in enumerate(visible.iterrows()):
+                idx = date_to_i[pd.Timestamp(erow['entry_date']).normalize()]
+                ex = sx(idx)
+                ep = float(erow['entry_price'])
+                ey = sy_price(ep)
+                label_y = min(price_bottom-50, max(price_top+10, ey+18+22*(k%2)))
+                label_x = min(width-right-174, max(left+4, ex-76))
+                reason = html.escape(str(erow.get('entry_reason','Entry')))
+                score = erow.get('entry_score', np.nan)
+                score_txt = '' if pd.isna(score) else f" · {float(score):.1f}"
+                chunks.append(f"<line x1='{ex:.1f}' y1='{ey+5:.1f}' x2='{ex:.1f}' y2='{label_y:.1f}' class='entry-guide'/>")
+                chunks.append(f"<polygon points='{ex-6:.1f},{ey+10:.1f} {ex+6:.1f},{ey+10:.1f} {ex:.1f},{ey+1:.1f}' class='entry-arrow'/>")
+                chunks.append(f"<rect x='{label_x:.1f}' y='{label_y:.1f}' width='170' height='34' rx='6' class='entry-box'/>")
+                chunks.append(f"<text x='{label_x+8:.1f}' y='{label_y+14:.1f}' class='entry-title'>ENTRY {pd.Timestamp(erow['entry_date']).strftime('%d/%m/%Y')}</text>")
+                chunks.append(f"<text x='{label_x+8:.1f}' y='{label_y+27:.1f}' class='entry-sub'>{ep:,.1f}{score_txt} · {reason}</text>")
+
+            # Compare current price with the most recent model entry.
+            last_ev = visible.iloc[-1] if not visible.empty else None
+            if last_ev is not None:
+                idx = date_to_i[pd.Timestamp(last_ev['entry_date']).normalize()]
+                ep = float(last_ev['entry_price'])
+                ey = sy_price(ep)
+                ex = sx(idx)
+                perf = last_close / ep - 1
+                chunks.append(f"<line x1='{ex:.1f}' y1='{ey:.1f}' x2='{sx(n-1):.1f}' y2='{ey:.1f}' class='entry-price-line'/>")
+                perf_cls = 'entry-perf-pos' if perf >= 0 else 'entry-perf-neg'
+                chunks.append(f"<text x='{min(width-right-6,sx(n-1)-4):.1f}' y='{ey-6:.1f}' text-anchor='end' class='{perf_cls}'>Từ entry: {perf*100:+.1f}%</text>")
 
     chunks.append(f"<line x1='{left}' y1='{macd_top-24}' x2='{width-right}' y2='{macd_top-24}' class='panel-sep'/>")
     zero=sy_macd(0)
@@ -211,23 +244,232 @@ def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 
     return ''.join(chunks)
 
 
-def _candidate_charts(price_history: pd.DataFrame | None, entry_candidates: pd.DataFrame, days: int = 126) -> str:
+def _candidate_charts(price_history: pd.DataFrame | None, entry_candidates: pd.DataFrame, entry_events: pd.DataFrame | None = None, days: int = 126) -> str:
     if price_history is None or price_history.empty or entry_candidates is None or entry_candidates.empty:
         return "<div class='empty'>Chưa có ứng viên hoặc dữ liệu giá để hiển thị chart.</div>"
     cards=[]
     for i,(_,row) in enumerate(entry_candidates.head(3).iterrows()):
         ticker=str(row['ticker'])
-        setup=html.escape(str(row.get('technical_setup','')))
-        score=_num(row.get('entry_score'),1)
+        setup=html.escape(str(row.get('entry_reason',row.get('technical_setup',''))))
+        score=_num(row.get('entry_score_current',row.get('entry_score')),1)
         open_attr=" open" if i==0 else ""
         cards.append(
             f"<details class='price-chart-detail'{open_attr}>"
             f"<summary><span>#{i+1} <b>{html.escape(ticker)}</b></span><span class='chart-meta'>Điểm mở vị thế {score} · {setup}</span></summary>"
-            f"<div class='terminal-chart-wrap'>{_candlestick_macd_svg(price_history,ticker,days=days,entry_score=row.get('entry_score'))}</div>"
+            f"<div class='terminal-chart-wrap'>{_candlestick_macd_svg(price_history,ticker,days=days,entry_events=entry_events)}</div>"
             "</details>"
         )
     return ''.join(cards)
 
+
+
+def _stock_chart_explorer(
+    price_history: pd.DataFrame | None,
+    entry_events: pd.DataFrame | None,
+    latest: pd.DataFrame,
+    default_ticker: str | None = None,
+    days: int = 126,
+) -> str:
+    if price_history is None or price_history.empty:
+        return "<div class='empty'>Chưa có dữ liệu giá cho Stock Chart Explorer.</div>"
+
+    cols = [
+        'date','ticker','open','high','low','close','volume',
+        'ma20','ma50','bb_upper','bb_lower','macd','macd_signal','macd_hist',
+    ]
+    if not {'date','ticker','open','high','low','close','volume'}.issubset(price_history.columns):
+        return "<div class='empty'>Thiếu OHLCV cho Stock Chart Explorer.</div>"
+
+    p = price_history[[col for col in cols if col in price_history.columns]].copy()
+    p['date'] = pd.to_datetime(p['date'])
+    p = (p.sort_values(['ticker','date'])
+         .groupby('ticker', group_keys=False)
+         .tail(days))
+    tickers = sorted(set(latest['ticker'].astype(str)) & set(p['ticker'].astype(str)))
+    if not tickers:
+        return "<div class='empty'>Không có mã phù hợp để hiển thị chart.</div>"
+
+    def clean(v, digits=4):
+        if pd.isna(v):
+            return None
+        try:
+            return round(float(v), digits)
+        except Exception:
+            return None
+
+    payload = {}
+    for ticker, g in p[p['ticker'].astype(str).isin(tickers)].groupby('ticker'):
+        rows=[]
+        for _,r in g.iterrows():
+            rows.append([
+                pd.Timestamp(r['date']).strftime('%Y-%m-%d'),
+                clean(r.get('open')), clean(r.get('high')), clean(r.get('low')), clean(r.get('close')),
+                clean(r.get('volume'),0),
+                clean(r.get('ma20')), clean(r.get('ma50')), clean(r.get('bb_upper')), clean(r.get('bb_lower')),
+                clean(r.get('macd')), clean(r.get('macd_signal')), clean(r.get('macd_hist')),
+            ])
+        payload[str(ticker)] = rows
+
+    sig_payload = {ticker: [] for ticker in tickers}
+    if entry_events is not None and not entry_events.empty:
+        e = entry_events.copy()
+        e['entry_date'] = pd.to_datetime(e['entry_date'])
+        cutoff = p['date'].min()
+        e = e[e['entry_date'].ge(cutoff)]
+        for ticker,g in e[e['ticker'].astype(str).isin(tickers)].groupby('ticker'):
+            sig_payload[str(ticker)] = [
+                [
+                    pd.Timestamp(r['entry_date']).strftime('%Y-%m-%d'),
+                    clean(r.get('entry_price')),
+                    clean(r.get('entry_score')),
+                    str(r.get('entry_reason','Entry')),
+                ]
+                for _,r in g.tail(6).iterrows()
+            ]
+
+    current = {}
+    for _,r in latest[latest['ticker'].astype(str).isin(tickers)].iterrows():
+        current[str(r['ticker'])] = {
+            'sector': str(r.get('sector','')),
+            'leadership': clean(r.get('leadership_score')),
+            'short': clean(r.get('short_momentum_score')),
+            'long': clean(r.get('long_momentum_score')),
+            'ma20_distance': clean(r.get('ma20_distance')),
+            'ret5': clean(r.get('ret_5')),
+        }
+
+    if default_ticker not in tickers:
+        default_ticker = tickers[0]
+    options=''.join(
+        f"<option value='{html.escape(t)}'{' selected' if t==default_ticker else ''}>{html.escape(t)}"
+        f"{' · '+html.escape(str(current.get(t,{}).get('sector',''))) if current.get(t,{}).get('sector') else ''}</option>"
+        for t in tickers
+    )
+    data_json = json.dumps(payload, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
+    sig_json = json.dumps(sig_payload, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
+    cur_json = json.dumps(current, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
+
+    return f"""
+    <div class='stock-explorer-controls'>
+      <label for='stock-chart-select'>Chọn cổ phiếu</label>
+      <select id='stock-chart-select'>{options}</select>
+      <span id='stock-chart-summary' class='chart-meta'></span>
+    </div>
+    <div class='canvas-wrap'><canvas id='stock-chart-canvas' height='700'></canvas></div>
+    <script type='application/json' id='stock-chart-data'>{data_json}</script>
+    <script type='application/json' id='stock-signal-data'>{sig_json}</script>
+    <script type='application/json' id='stock-current-data'>{cur_json}</script>
+    <script>
+    (() => {{
+      const DATA=JSON.parse(document.getElementById('stock-chart-data').textContent);
+      const SIG=JSON.parse(document.getElementById('stock-signal-data').textContent);
+      const CUR=JSON.parse(document.getElementById('stock-current-data').textContent);
+      const select=document.getElementById('stock-chart-select');
+      const canvas=document.getElementById('stock-chart-canvas');
+      const summary=document.getElementById('stock-chart-summary');
+      const ctx=canvas.getContext('2d');
+
+      function line(points,color,width=1,dash=[]) {{
+        ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=width; ctx.setLineDash(dash);
+        ctx.beginPath(); let started=false;
+        for(const p of points) {{
+          if(p[1]==null || !Number.isFinite(p[1])) {{started=false; continue;}}
+          if(!started){{ctx.moveTo(p[0],p[1]);started=true;}} else ctx.lineTo(p[0],p[1]);
+        }}
+        ctx.stroke(); ctx.restore();
+      }}
+      function fmt(v,d=1){{return Number.isFinite(v)?v.toFixed(d):'—';}}
+      function draw(ticker) {{
+        const rows=DATA[ticker]||[]; if(!rows.length)return;
+        const dpr=window.devicePixelRatio||1;
+        const cssW=Math.max(900,canvas.parentElement.clientWidth-2), cssH=700;
+        canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
+        canvas.width=Math.floor(cssW*dpr); canvas.height=Math.floor(cssH*dpr);
+        ctx.setTransform(dpr,0,0,dpr,0,0);
+        ctx.clearRect(0,0,cssW,cssH);
+        ctx.fillStyle='#07111f';ctx.fillRect(0,0,cssW,cssH);
+
+        const L=54,R=70,PT=24,PB=440,VT=330,VB=440,MT=505,MB=660,W=cssW-L-R;
+        const lows=rows.map(r=>r[3]).filter(Number.isFinite), highs=rows.map(r=>r[2]).filter(Number.isFinite);
+        const bbl=rows.map(r=>r[9]).filter(Number.isFinite), bbu=rows.map(r=>r[8]).filter(Number.isFinite);
+        let pmin=Math.min(...lows,...bbl), pmax=Math.max(...highs,...bbu);
+        const pad=(pmax-pmin)*.05||1;pmin-=pad;pmax+=pad;
+        const vmax=Math.max(1,...rows.map(r=>r[5]||0));
+        const macVals=rows.flatMap(r=>[r[10],r[11],r[12]]).filter(Number.isFinite);
+        const mlim=Math.max(.001,...macVals.map(Math.abs))*1.12;
+        const step=W/rows.length, cw=Math.max(1.4,Math.min(7,step*.62));
+        const sx=i=>L+(i+.5)*step, sy=v=>PT+(pmax-v)/(pmax-pmin)*(PB-PT);
+        const vy=v=>VB-(v||0)/vmax*(VB-VT), my=v=>MT+(mlim-v)/(2*mlim)*(MB-MT);
+
+        ctx.strokeStyle='#1a2a40';ctx.lineWidth=1;ctx.fillStyle='#93a6c0';ctx.font='10px system-ui';
+        for(let k=0;k<6;k++){{const f=k/5,y=PT+f*(PB-PT),v=pmax-f*(pmax-pmin);ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(cssW-R,y);ctx.stroke();ctx.fillText(v.toFixed(1),cssW-R+8,y+3);}}
+        for(let k=0;k<7;k++){{const x=L+k/6*W;ctx.beginPath();ctx.moveTo(x,PT);ctx.lineTo(x,MB);ctx.stroke();}}
+
+        for(let i=0;i<rows.length;i++) {{
+          const r=rows[i], up=r[4]>=r[1], x=sx(i), yv=vy(r[5]);
+          ctx.fillStyle=up?'rgba(22,121,111,.75)':'rgba(167,61,75,.72)';
+          ctx.fillRect(x-cw/2,yv,cw,Math.max(.8,VB-yv));
+        }}
+        line(rows.map((r,i)=>[sx(i),r[8]==null?null:sy(r[8])]),'#7186a5',1,[3,4]);
+        line(rows.map((r,i)=>[sx(i),r[9]==null?null:sy(r[9])]),'#7186a5',1,[3,4]);
+        line(rows.map((r,i)=>[sx(i),r[6]==null?null:sy(r[6])]),'#45d483',1.5);
+        line(rows.map((r,i)=>[sx(i),r[7]==null?null:sy(r[7])]),'#f2bf55',1.5);
+
+        for(let i=0;i<rows.length;i++) {{
+          const r=rows[i],up=r[4]>=r[1],x=sx(i),color=up?'#18a999':'#ef4d61';
+          const yhi=sy(r[2]),ylo=sy(r[3]),yo=sy(r[1]),yc=sy(r[4]);
+          ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=1;
+          ctx.beginPath();ctx.moveTo(x,yhi);ctx.lineTo(x,ylo);ctx.stroke();
+          ctx.fillRect(x-cw/2,Math.min(yo,yc),cw,Math.max(1.2,Math.abs(yc-yo)));
+        }}
+
+        const zero=my(0);ctx.strokeStyle='#40516d';ctx.beginPath();ctx.moveTo(L,zero);ctx.lineTo(cssW-R,zero);ctx.stroke();
+        for(let i=0;i<rows.length;i++) {{
+          const h=rows[i][12];if(!Number.isFinite(h))continue;const y=my(h),x=sx(i);
+          ctx.fillStyle=h>=0?'#61d4c7':'#f16978';ctx.fillRect(x-cw*.42,Math.min(y,zero),Math.max(2,cw*.84),Math.max(1,Math.abs(zero-y)));
+        }}
+        line(rows.map((r,i)=>[sx(i),r[10]==null?null:my(r[10])]),'#3da5ff',1.7);
+        line(rows.map((r,i)=>[sx(i),r[11]==null?null:my(r[11])]),'#ff8a3d',1.7);
+
+        ctx.fillStyle='#c2cee0';ctx.font='600 11px system-ui';ctx.fillText('MACD (12,26,9)',L,MT-28);
+        ctx.fillStyle='#45d483';ctx.fillText('MA20',L+120,MT-28);ctx.fillStyle='#f2bf55';ctx.fillText('MA50',L+166,MT-28);
+        ctx.fillStyle='#91a5c2';ctx.fillText('Bollinger Bands',L+212,MT-28);
+
+        const dateIndex=Object.fromEntries(rows.map((r,i)=>[r[0],i]));
+        const events=(SIG[ticker]||[]).filter(e=>dateIndex[e[0]]!==undefined);
+        for(const e of events) {{
+          const idx=dateIndex[e[0]],x=sx(idx),y=sy(e[1]);
+          ctx.strokeStyle='#45d483';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x,y+5);ctx.lineTo(x,Math.min(PB-35,y+48));ctx.stroke();ctx.setLineDash([]);
+          ctx.fillStyle='#45d483';ctx.beginPath();ctx.moveTo(x,y+1);ctx.lineTo(x-6,y+10);ctx.lineTo(x+6,y+10);ctx.closePath();ctx.fill();
+          ctx.fillStyle='#102d28';ctx.strokeStyle='#45d483';ctx.lineWidth=1;
+          const bx=Math.min(cssW-R-176,Math.max(L+4,x-75)),by=Math.min(PB-34,Math.max(PT+8,y+18));
+          ctx.fillRect(bx,by,172,32);ctx.strokeRect(bx,by,172,32);
+          ctx.fillStyle='#9ef0bd';ctx.font='700 10px system-ui';ctx.fillText('ENTRY '+e[0].split('-').reverse().join('/'),bx+7,by+13);
+          ctx.fillStyle='#e7fff0';ctx.font='600 10px system-ui';ctx.fillText(fmt(e[1])+' · '+e[3],bx+7,by+26);
+        }}
+        if(events.length) {{
+          const e=events[events.length-1],idx=dateIndex[e[0]],ep=e[1],y=sy(ep),last=rows[rows.length-1][4],perf=last/ep-1;
+          ctx.strokeStyle='#45d483';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
+          ctx.fillStyle=perf>=0?'#83e7aa':'#f1919e';ctx.font='700 11px system-ui';ctx.fillText('Từ entry '+(perf*100>=0?'+':'')+(perf*100).toFixed(1)+'%',Math.max(L,sx(rows.length-1)-105),y-7);
+        }}
+
+        const ticks=[0,.2,.4,.6,.8,1];
+        ctx.fillStyle='#93a6c0';ctx.font='10px system-ui';
+        for(const f of ticks){{const i=Math.min(rows.length-1,Math.round(f*(rows.length-1)));ctx.fillText(rows[i][0].slice(5,7)+'/'+rows[i][0].slice(0,4),sx(i)-16,690);}}
+        const meta=CUR[ticker]||{{}};
+        const ev=events.length?events[events.length-1]:null;
+        const last=rows[rows.length-1][4];
+        let s=(meta.sector||'')+' · Leadership '+fmt(meta.leadership)+' · SM NH '+fmt(meta.short)+' · SM DH '+fmt(meta.long);
+        if(ev) s+=' · Entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
+        else s+=' · Chưa có entry signal trong 6 tháng';
+        summary.textContent=s;
+      }}
+      select.addEventListener('change',()=>draw(select.value));
+      new ResizeObserver(()=>draw(select.value)).observe(canvas.parentElement);
+      draw(select.value);
+    }})();
+    </script>
+    """
 
 def _rotation_svg(sectors: pd.DataFrame, width=980, height=440) -> str:
     if sectors.empty:
@@ -678,17 +920,38 @@ def render_dashboard(
         size=portfolio_size,
         sector_cap=portfolio_sector_cap,
     )
-    entry_candidates=build_entry_candidates(
-        latest,
-        top_n=int(opp_cfg.get('entry_top_n',3)),
+    score_history = scored_history if scored_history is not None else pd.DataFrame()
+    entry_kwargs = dict(
         min_sector_score=float(opp_cfg.get('entry_min_sector_score',50)),
+        min_leadership_score=float(opp_cfg.get('entry_min_leadership_score',65)),
+        min_short_score=float(opp_cfg.get('entry_min_short_score',65)),
+        min_long_score=float(opp_cfg.get('entry_min_long_score',55)),
+        short_cross_threshold=float(opp_cfg.get('entry_short_cross_threshold',80)),
         require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive',True)),
         require_ma_bull=bool(opp_cfg.get('entry_require_ma_bull',True)),
+        max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance',0.15)),
+        max_ret5=float(opp_cfg.get('entry_max_ret5',0.18)),
         ma_cross_bonus=float(opp_cfg.get('entry_ma_cross_bonus',4)),
         bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus',6)),
     )
+    entry_signal_history=build_entry_signal_history(score_history, **entry_kwargs)
+    entry_candidates=build_entry_candidates(
+        score_history,
+        top_n=int(opp_cfg.get('entry_top_n',3)),
+        max_age_sessions=int(opp_cfg.get('entry_max_age_sessions',3)),
+        max_distance_from_entry=float(opp_cfg.get('entry_max_distance_from_entry',0.08)),
+        **entry_kwargs,
+    )
     opportunity_count=len(short_entries)+len(long_entries)
-    entry_chart_html=_candidate_charts(price_history,entry_candidates,days=126)
+    entry_chart_html=_candidate_charts(price_history,entry_candidates,entry_signal_history,days=126)
+    default_chart_ticker = (
+        str(entry_candidates.iloc[0]['ticker']) if not entry_candidates.empty
+        else (str(leaders.iloc[0]['ticker']) if not leaders.empty else None)
+    )
+    stock_explorer_html=_stock_chart_explorer(
+        price_history, entry_signal_history, latest,
+        default_ticker=default_chart_ticker, days=126,
+    )
 
     css = """
     :root{
@@ -714,7 +977,8 @@ def render_dashboard(
     table.data{width:100%;border-collapse:collapse;font-size:12px}table.data th,table.data td{padding:8px 8px;border-bottom:1px solid rgba(32,49,76,.66);text-align:right;white-space:nowrap}table.data th:first-child,table.data td:first-child,table.data th:nth-child(2),table.data td:nth-child(2){text-align:left}table.data th{color:#91a5c2;font-weight:650;background:rgba(255,255,255,.014);position:sticky;top:0}.table-wrap{overflow:auto;max-height:515px}
     .mini-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mini-card{padding:13px}.mini-title{font-size:13px;font-weight:750;margin-bottom:9px}.mini-grid{display:grid;grid-template-columns:1fr auto;gap:5px 10px;font-size:11px;color:var(--muted)}.mini-grid b{color:#e5eefc;font-variant-numeric:tabular-nums}
     .readout{margin:0;padding-left:18px;color:#c8d5e8;font-size:13px;line-height:1.65}.readout b{color:white}.disclaimer{margin-top:20px;padding:14px 16px;border:1px solid #2d3d58;background:#0a1423;border-radius:11px;font-size:11px;color:#8da0bc;line-height:1.55}
-    .entry-panel{margin-top:16px;border:1px solid #3b745f;background:linear-gradient(180deg,rgba(19,48,42,.62),rgba(11,26,36,.98));box-shadow:0 16px 42px rgba(0,0,0,.22)}.entry-panel h2{font-size:19px}.entry-rule{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}.rule-pill{font-size:10px;border:1px solid #315a4d;background:rgba(69,212,131,.07);color:#bdebd0;border-radius:999px;padding:5px 8px}.price-chart-detail{margin-top:10px;border:1px solid #243854;border-radius:10px;background:#081321;overflow:hidden}.price-chart-detail summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:0;background:#0b1728}.chart-meta{font-size:11px;color:var(--muted);font-weight:500}.terminal-chart-wrap{padding:8px;background:#07111f;overflow:auto}.candle-chart{min-width:980px;background:#07111f;border-radius:8px}.terminal-bg{fill:#07111f}.terminal-grid{stroke:#1a2a40;stroke-width:1;opacity:.72}.terminal-axis,.terminal-label{fill:#93a6c0;font-size:10px}.terminal-label{fill:#c2cee0;font-weight:650}.panel-sep{stroke:#263a55}.candle-up{fill:#18a999;stroke:#18a999;stroke-width:1}.candle-down{fill:#ef4d61;stroke:#ef4d61;stroke-width:1}.vol-up{fill:#16796f;opacity:.75}.vol-down{fill:#a73d4b;opacity:.72}.ma20-line{fill:none;stroke:#45d483;stroke-width:1.6}.ma50-line{fill:none;stroke:#f2bf55;stroke-width:1.5}.bb-line{fill:none;stroke:#7186a5;stroke-width:1;stroke-dasharray:3 4;opacity:.65}.last-price-line{stroke:#20b8a8;stroke-width:1;stroke-dasharray:2 3;opacity:.65}.last-price-box{fill:#148f84}.last-price-text{fill:white;font-size:10px;font-weight:700}.entry-guide{stroke:#45d483;stroke-width:1.2;stroke-dasharray:4 4;opacity:.85}.entry-arrow{fill:#45d483}.entry-box{fill:#102d28;stroke:#45d483;stroke-width:1}.entry-title{fill:#9ef0bd;font-size:10px;font-weight:800;letter-spacing:.05em}.entry-sub{fill:#e7fff0;font-size:10px;font-weight:650}.macd-zero{stroke:#40516d;stroke-width:1}.macd-bar-pos{fill:#61d4c7;opacity:.9}.macd-bar-neg{fill:#f16978;opacity:.9}.macd-line{fill:none;stroke:#3da5ff;stroke-width:1.7}.signal-line{fill:none;stroke:#ff8a3d;stroke-width:1.7}.legend-ma20{fill:#45d483;font-size:10px}.legend-ma50{fill:#f2bf55;font-size:10px}.legend-bb{fill:#91a5c2;font-size:10px}
+    .stock-explorer-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.stock-explorer-controls label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.stock-explorer-controls select{min-width:260px;max-width:520px;background:#0a1525;color:#e9f2ff;border:1px solid #2a405f;border-radius:8px;padding:8px 10px;font:inherit}.canvas-wrap{width:100%;overflow:auto;background:#07111f;border:1px solid #20314c;border-radius:10px;padding:6px}.canvas-wrap canvas{display:block;min-width:900px}
+    .entry-panel{margin-top:16px;border:1px solid #3b745f;background:linear-gradient(180deg,rgba(19,48,42,.62),rgba(11,26,36,.98));box-shadow:0 16px 42px rgba(0,0,0,.22)}.entry-panel h2{font-size:19px}.entry-rule{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}.rule-pill{font-size:10px;border:1px solid #315a4d;background:rgba(69,212,131,.07);color:#bdebd0;border-radius:999px;padding:5px 8px}.price-chart-detail{margin-top:10px;border:1px solid #243854;border-radius:10px;background:#081321;overflow:hidden}.price-chart-detail summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:0;background:#0b1728}.chart-meta{font-size:11px;color:var(--muted);font-weight:500}.terminal-chart-wrap{padding:8px;background:#07111f;overflow:auto}.candle-chart{min-width:980px;background:#07111f;border-radius:8px}.terminal-bg{fill:#07111f}.terminal-grid{stroke:#1a2a40;stroke-width:1;opacity:.72}.terminal-axis,.terminal-label{fill:#93a6c0;font-size:10px}.terminal-label{fill:#c2cee0;font-weight:650}.panel-sep{stroke:#263a55}.candle-up{fill:#18a999;stroke:#18a999;stroke-width:1}.candle-down{fill:#ef4d61;stroke:#ef4d61;stroke-width:1}.vol-up{fill:#16796f;opacity:.75}.vol-down{fill:#a73d4b;opacity:.72}.ma20-line{fill:none;stroke:#45d483;stroke-width:1.6}.ma50-line{fill:none;stroke:#f2bf55;stroke-width:1.5}.bb-line{fill:none;stroke:#7186a5;stroke-width:1;stroke-dasharray:3 4;opacity:.65}.last-price-line{stroke:#20b8a8;stroke-width:1;stroke-dasharray:2 3;opacity:.65}.last-price-box{fill:#148f84}.last-price-text{fill:white;font-size:10px;font-weight:700}.entry-guide{stroke:#45d483;stroke-width:1.2;stroke-dasharray:4 4;opacity:.85}.entry-arrow{fill:#45d483}.entry-box{fill:#102d28;stroke:#45d483;stroke-width:1}.entry-title{fill:#9ef0bd;font-size:10px;font-weight:800;letter-spacing:.05em}.entry-sub{fill:#e7fff0;font-size:10px;font-weight:650}.entry-price-line{stroke:#45d483;stroke-width:1.2;stroke-dasharray:6 4;opacity:.72}.entry-perf-pos{fill:#83e7aa;font-size:10px;font-weight:750}.entry-perf-neg{fill:#f1919e;font-size:10px;font-weight:750}.macd-zero{stroke:#40516d;stroke-width:1}.macd-bar-pos{fill:#61d4c7;opacity:.9}.macd-bar-neg{fill:#f16978;opacity:.9}.macd-line{fill:none;stroke:#3da5ff;stroke-width:1.7}.signal-line{fill:none;stroke:#ff8a3d;stroke-width:1.7}.legend-ma20{fill:#45d483;font-size:10px}.legend-ma50{fill:#f2bf55;font-size:10px}.legend-bb{fill:#91a5c2;font-size:10px}
     .opportunity-shell{border:1px solid #34506f;background:linear-gradient(180deg,rgba(16,37,57,.98),rgba(10,23,39,.98));box-shadow:0 0 0 1px rgba(84,215,239,.05),0 18px 44px rgba(0,0,0,.18)}.opportunity-shell.has-alert{border-color:#3f856c;box-shadow:0 0 0 1px rgba(69,212,131,.10),0 18px 44px rgba(0,0,0,.20)}.opportunity-title{display:flex;align-items:center;gap:9px}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#66778f}.has-alert .pulse-dot{background:var(--green);box-shadow:0 0 0 5px rgba(69,212,131,.10)}.count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;border-radius:999px;padding:0 7px;background:#142943;border:1px solid #2f4c70;color:#dcecff;font-size:11px;font-weight:750}.has-alert .count-badge{background:rgba(69,212,131,.10);border-color:#34745e;color:#8ff0b5}.opp-col{min-width:0}.opp-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px;font-weight:750}.opp-threshold{font-size:10px;color:var(--muted);font-weight:500}.portfolio-note{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 12px}.portfolio-pill{border:1px solid #2b405f;background:#0b1728;border-radius:9px;padding:8px 10px;font-size:11px;color:#aebdd2}.portfolio-pill b{display:block;color:#eef5ff;font-size:13px;margin-top:2px}
     details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:#aebdd2;font-size:12px}.method{font-size:12px;color:var(--muted);line-height:1.6}
     @media(max-width:1150px){.kpis{grid-template-columns:repeat(3,1fr)}.grid-2,.grid-even{grid-template-columns:1fr}.grid-3{grid-template-columns:1fr 1fr}}
@@ -742,14 +1006,20 @@ def render_dashboard(
 
     <div class='panel entry-panel' id='entry-top3'>
       <div class='section-head'><div><div class='section-kicker'>Priority setup</div><h2>Top 3 ứng viên mở vị thế — Model</h2></div><span class='tag'>Strict technical gate</span></div>
-      <div class='entry-rule'><span class='rule-pill'>MACD &gt; 0 + Histogram &gt; 0</span><span class='rule-pill'>MA20 &gt; MA50</span><span class='rule-pill'>Ngành đủ mạnh</span><span class='rule-pill'>Bonus: MA cross gần đây</span><span class='rule-pill'>Bonus: breakout sau BB squeeze</span></div>
-      <div class='note' style='margin-bottom:10px'>Chỉ xếp hạng các mã qua đủ bộ lọc kỹ thuật bắt buộc. Breakout sau giai đoạn Bollinger Band siết là điểm cộng, không phải điều kiện bắt buộc. Nếu ít hơn 3 mã đạt chuẩn, bảng sẽ hiển thị ít hơn 3 thay vì nới điều kiện.</div>
-      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_score','sector_score','leadership_score','short_momentum_score','long_momentum_score','macd_status','ma_status','technical_setup','stage'],3)}</div>
+      <div class='entry-rule'><span class='rule-pill'>Fresh trigger</span><span class='rule-pill'>MACD &gt; 0 + Histogram &gt; 0</span><span class='rule-pill'>MA20 &gt; MA50</span><span class='rule-pill'>≤ 15% trên MA20</span><span class='rule-pill'>5 phiên ≤ +18%</span><span class='rule-pill'>≤ 3 phiên từ entry</span><span class='rule-pill'>≤ +8% từ entry</span></div>
+      <div class='note' style='margin-bottom:10px'>Đây là <b>fresh entry</b>, không phải bảng các mã mạnh nhất hiện tại. Model chỉ giữ setup còn mới, chưa chạy quá xa khỏi điểm trigger và chưa quá căng so với MA20/5 phiên. Nếu không đủ 3 mã thì để trống thay vì đuổi giá.</div>
+      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_date','entry_price','current_price','since_entry_pct','entry_age_sessions','entry_reason','entry_score_current','sector_score','leadership_score','short_momentum_score','long_momentum_score','stage'],3)}</div>
       <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>6-month technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>~126 phiên</span></div>
       {entry_chart_html}
     </div>
 
-    <div class='nav'><a href='#entry-top3'>Top 3 setup</a><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
+    <div class='panel section' id='chart-explorer'>
+      <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6 tháng · Entry history</span></div>
+      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và các điểm entry mà model đã phát ra trong lịch sử 6 tháng. Đường entry gần nhất được kéo sang hiện tại để thấy cổ phiếu đã đi xa bao nhiêu.</div>
+      {stock_explorer_html}
+    </div>
+
+    <div class='nav'><a href='#entry-top3'>Fresh entry</a><a href='#chart-explorer'>Chart cổ phiếu</a><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
 
     <div class='kpis' id='market'>
       <div class='card'><div class='card-label'>Trạng thái</div><div class='big'>{html.escape(regime_text)}</div><div class='sub'>Regime tổng hợp</div></div>

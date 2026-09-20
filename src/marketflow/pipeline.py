@@ -9,7 +9,7 @@ from .scoring import build_scores, add_stage
 from .regime import market_regime
 from .storage import DuckStore
 from .dashboard import render_dashboard
-from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates
+from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history
 from .supabase_store import SupabaseRESTStore
 
 
@@ -153,7 +153,10 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         # disappearing simply because future eligibility changed.
         panel_cols = [c for c in [
             'date','ticker','sector','exchange','open','high','low','close','volume','value',
-            'value_avg_20','benchmark_close','ret_1','ret_20','ret_60'
+            'value_avg_20','benchmark_close','ret_1','ret_5','ret_20','ret_60',
+            'ma20','ma50','ma20_distance','ma50_distance','macd','macd_signal','macd_hist',
+            'macd_positive','ma_bull','ma_cross_up','ma_cross_recent_10',
+            'bb_upper','bb_lower','bb_bandwidth','bb_squeeze_recent_10','bb_breakout_after_squeeze'
         ] if c in feat.columns]
         panel = feat[panel_cols].copy()
         panel['is_eligible'] = eligible.astype(bool).values
@@ -183,12 +186,38 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             size=int(opp_cfg.get('portfolio_size', 10)),
             sector_cap=int(opp_cfg.get('portfolio_sector_cap', 2)),
         )
-        entry_candidates = build_entry_candidates(
-            latest,
-            top_n=int(opp_cfg.get('entry_top_n', 3)),
+        entry_signal_history = build_entry_signal_history(
+            scored,
             min_sector_score=float(opp_cfg.get('entry_min_sector_score', 50)),
+            min_leadership_score=float(opp_cfg.get('entry_min_leadership_score', 65)),
+            min_short_score=float(opp_cfg.get('entry_min_short_score', 65)),
+            min_long_score=float(opp_cfg.get('entry_min_long_score', 55)),
+            short_cross_threshold=float(opp_cfg.get('entry_short_cross_threshold', 80)),
             require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive', True)),
             require_ma_bull=bool(opp_cfg.get('entry_require_ma_bull', True)),
+            max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance', 0.15)),
+            max_ret5=float(opp_cfg.get('entry_max_ret5', 0.18)),
+            ma_cross_bonus=float(opp_cfg.get('entry_ma_cross_bonus', 4)),
+            bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus', 6)),
+        )
+        if not entry_signal_history.empty:
+            entry_signal_history['model_version'] = str(
+                opp_cfg.get('entry_model_version', 'v2-causal')
+            )
+        entry_candidates = build_entry_candidates(
+            scored,
+            top_n=int(opp_cfg.get('entry_top_n', 3)),
+            min_sector_score=float(opp_cfg.get('entry_min_sector_score', 50)),
+            min_leadership_score=float(opp_cfg.get('entry_min_leadership_score', 65)),
+            min_short_score=float(opp_cfg.get('entry_min_short_score', 65)),
+            min_long_score=float(opp_cfg.get('entry_min_long_score', 55)),
+            short_cross_threshold=float(opp_cfg.get('entry_short_cross_threshold', 80)),
+            require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive', True)),
+            require_ma_bull=bool(opp_cfg.get('entry_require_ma_bull', True)),
+            max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance', 0.15)),
+            max_ret5=float(opp_cfg.get('entry_max_ret5', 0.18)),
+            max_age_sessions=int(opp_cfg.get('entry_max_age_sessions', 3)),
+            max_distance_from_entry=float(opp_cfg.get('entry_max_distance_from_entry', 0.08)),
             ma_cross_bonus=float(opp_cfg.get('entry_ma_cross_bonus', 4)),
             bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus', 6)),
         )
@@ -196,6 +225,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         long_entries.to_csv(out / 'opportunities_long_latest.csv', index=False)
         portfolio.to_csv(out / 'model_portfolio_10.csv', index=False)
         entry_candidates.to_csv(out / 'top3_entry_candidates.csv', index=False)
+        entry_signal_history.to_csv(out / 'entry_signal_history.csv', index=False)
 
         regime.to_csv(out / 'market_regime.csv', index=False)
         render_dashboard(
@@ -230,6 +260,8 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         if sb is not None:
             sb.sync_universe(universe, as_of_date=latest_date)
             sb.sync_scores(latest)
+            if not entry_signal_history.empty:
+                sb.sync_entry_signals(entry_signal_history)
             sec_latest = sector_daily[sector_daily['date'] == latest_date].copy()
             sb.sync_sector(sec_latest)
             if not regime.empty:

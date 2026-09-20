@@ -168,90 +168,271 @@ def build_model_portfolio(
     return out
 
 
-def build_entry_candidates(
-    latest: pd.DataFrame,
-    top_n: int = 3,
+
+def build_entry_signal_history(
+    scored_history: pd.DataFrame,
     min_sector_score: float = 50.0,
+    min_leadership_score: float = 65.0,
+    min_short_score: float = 65.0,
+    min_long_score: float = 55.0,
+    short_cross_threshold: float = 80.0,
     require_macd_positive: bool = True,
     require_ma_bull: bool = True,
+    max_ma20_distance: float = 0.15,
+    max_ret5: float = 0.18,
     ma_cross_bonus: float = 4.0,
     bb_breakout_bonus: float = 6.0,
 ) -> pd.DataFrame:
-    """Rank model entry candidates using sector/leadership plus technical gates.
+    """Create causal historical entry events.
 
-    Hard gates:
-    - MACD line > 0 and MACD histogram > 0 (when enabled).
-    - MA20 > MA50 (when enabled).
-    - Sector Score >= minimum threshold.
-
-    Optional confirmation bonuses:
-    - recent bullish MA20/MA50 cross within 10 sessions;
-    - breakout above upper Bollinger Band after a recent squeeze.
-
-    Returns fewer than top_n rows if the market has fewer valid setups.
+    The signal is event-based, not a rank of whatever looks strongest today.
+    A stock must pass quality and technical gates, must not be too extended, and
+    must have a fresh trigger on that session.
     """
-    if latest is None or latest.empty or top_n <= 0:
+    if scored_history is None or scored_history.empty:
         return pd.DataFrame()
 
-    x = latest.copy()
+    x = scored_history.copy()
+    x['date'] = pd.to_datetime(x['date']).dt.normalize()
+    x = x.sort_values(['ticker','date']).reset_index(drop=True)
+
     needed = [
-        'leadership_score','sector_score','short_momentum_score','long_momentum_score',
-        'flow_score','trend_score','macd','macd_signal','macd_hist','macd_positive',
-        'ma20','ma50','ma_bull','ma_cross_recent_10','bb_breakout_after_squeeze',
+        'close','leadership_score','sector_score','short_momentum_score','long_momentum_score',
+        'flow_score','trend_score','ret_5','ma20','ma20_distance','macd','macd_hist','macd_positive',
+        'ma_bull','ma_cross_up','bb_breakout_after_squeeze',
     ]
     for col in needed:
         if col not in x.columns:
             x[col] = np.nan
 
-    mask = pd.to_numeric(x['sector_score'], errors='coerce').ge(float(min_sector_score))
+    g = x.groupby('ticker', group_keys=False)
+    x['prev_short_momentum_score'] = g['short_momentum_score'].shift(1)
+    x['prev_macd_hist'] = g['macd_hist'].shift(1)
+
+    short_cross = (
+        pd.to_numeric(x['short_momentum_score'], errors='coerce').ge(float(short_cross_threshold))
+        & x['prev_short_momentum_score'].notna()
+        & pd.to_numeric(x['prev_short_momentum_score'], errors='coerce').lt(float(short_cross_threshold))
+    )
+    macd_turn = (
+        pd.to_numeric(x['macd_hist'], errors='coerce').gt(0)
+        & pd.to_numeric(x['prev_macd_hist'], errors='coerce').le(0)
+        & pd.to_numeric(x['macd'], errors='coerce').gt(0)
+        & pd.to_numeric(x['short_momentum_score'], errors='coerce').ge(max(70.0, float(min_short_score)))
+    )
+    ma_cross = x['ma_cross_up'].fillna(False).astype(bool)
+    bb_breakout = x['bb_breakout_after_squeeze'].fillna(False).astype(bool)
+    fresh_trigger = short_cross | macd_turn | ma_cross | bb_breakout
+
+    quality = (
+        pd.to_numeric(x['sector_score'], errors='coerce').ge(float(min_sector_score))
+        & pd.to_numeric(x['leadership_score'], errors='coerce').ge(float(min_leadership_score))
+        & pd.to_numeric(x['short_momentum_score'], errors='coerce').ge(float(min_short_score))
+        & pd.to_numeric(x['long_momentum_score'], errors='coerce').ge(float(min_long_score))
+    )
     if require_macd_positive:
-        mask &= x['macd_positive'].fillna(False).astype(bool)
+        quality &= x['macd_positive'].fillna(False).astype(bool)
     if require_ma_bull:
-        mask &= x['ma_bull'].fillna(False).astype(bool)
-    x = x.loc[mask].copy()
-    if x.empty:
-        return x
+        quality &= x['ma_bull'].fillna(False).astype(bool)
+
+    anti_chase = (
+        pd.to_numeric(x['ma20_distance'], errors='coerce').le(float(max_ma20_distance))
+        & pd.to_numeric(x['ret_5'], errors='coerce').le(float(max_ret5))
+    )
+
+    raw_signal = quality & anti_chase & fresh_trigger
+
+    # One entry per active trend leg. Once a position is considered open, later
+    # triggers in the same run do not reset the entry date. A new entry is only
+    # allowed after the setup has materially reset.
+    reset = (
+        (pd.to_numeric(x['close'], errors='coerce') < pd.to_numeric(x.get('ma20'), errors='coerce'))
+        | pd.to_numeric(x['macd_hist'], errors='coerce').lt(0)
+        | pd.to_numeric(x['leadership_score'], errors='coerce').lt(55)
+    )
+    accepted = pd.Series(False, index=x.index)
+    for _, idxs in x.groupby('ticker', sort=False).groups.items():
+        active = False
+        for idx in idxs:
+            if active and bool(reset.loc[idx]):
+                active = False
+            if (not active) and bool(raw_signal.loc[idx]):
+                accepted.loc[idx] = True
+                active = True
+
+    e = x.loc[accepted].copy()
+    if e.empty:
+        return e
 
     base = (
-        0.25 * pd.to_numeric(x['sector_score'], errors='coerce')
-        + 0.25 * pd.to_numeric(x['leadership_score'], errors='coerce')
-        + 0.20 * pd.to_numeric(x['short_momentum_score'], errors='coerce')
-        + 0.15 * pd.to_numeric(x['long_momentum_score'], errors='coerce')
-        + 0.10 * pd.to_numeric(x['flow_score'], errors='coerce')
-        + 0.05 * pd.to_numeric(x['trend_score'], errors='coerce')
+        0.25 * pd.to_numeric(e['sector_score'], errors='coerce')
+        + 0.25 * pd.to_numeric(e['leadership_score'], errors='coerce')
+        + 0.20 * pd.to_numeric(e['short_momentum_score'], errors='coerce')
+        + 0.15 * pd.to_numeric(e['long_momentum_score'], errors='coerce')
+        + 0.10 * pd.to_numeric(e['flow_score'], errors='coerce')
+        + 0.05 * pd.to_numeric(e['trend_score'], errors='coerce')
     )
-    x['entry_score'] = base.fillna(0)
-    x['entry_score'] += x['ma_cross_recent_10'].fillna(False).astype(bool).astype(float) * float(ma_cross_bonus)
-    x['entry_score'] += x['bb_breakout_after_squeeze'].fillna(False).astype(bool).astype(float) * float(bb_breakout_bonus)
+    e['entry_score'] = base.fillna(0)
+    e['entry_score'] += e['ma_cross_up'].fillna(False).astype(bool).astype(float) * float(ma_cross_bonus)
+    e['entry_score'] += e['bb_breakout_after_squeeze'].fillna(False).astype(bool).astype(float) * float(bb_breakout_bonus)
+    e['entry_score'] += short_cross.loc[e.index].astype(float) * 3.0
 
-    x['technical_setup'] = np.where(
-        x['bb_breakout_after_squeeze'].fillna(False).astype(bool),
-        'BB squeeze breakout',
-        np.where(
-            x['ma_cross_recent_10'].fillna(False).astype(bool),
-            'MA cross gần đây',
-            'Trend xác nhận',
-        ),
+    e['entry_reason'] = np.select(
+        [
+            e['bb_breakout_after_squeeze'].fillna(False).astype(bool),
+            e['ma_cross_up'].fillna(False).astype(bool),
+            short_cross.loc[e.index],
+            macd_turn.loc[e.index],
+        ],
+        ['BB squeeze breakout','MA20/MA50 cross','SM ngắn hạn vượt 80','MACD turn dương'],
+        default='Fresh trend trigger',
     )
-    x['macd_status'] = np.where(
-        x['macd_positive'].fillna(False).astype(bool),
-        'DƯƠNG',
-        'KHÔNG',
+    e['entry_price'] = pd.to_numeric(e['close'], errors='coerce')
+    e = e.rename(columns={'date':'entry_date'})
+    cols = [
+        'entry_date','ticker','sector','entry_price','entry_score','entry_reason',
+        'sector_score','leadership_score','short_momentum_score','long_momentum_score',
+        'flow_score','trend_score','ret_5','ma20_distance','macd','macd_hist',
+        'ma20','ma50','stage',
+    ]
+    return e[[col for col in cols if col in e.columns]].sort_values(
+        ['entry_date','entry_score'], ascending=[True,False]
+    ).reset_index(drop=True)
+
+
+def build_entry_candidates(
+    scored_history: pd.DataFrame,
+    top_n: int = 3,
+    min_sector_score: float = 50.0,
+    min_leadership_score: float = 65.0,
+    min_short_score: float = 65.0,
+    min_long_score: float = 55.0,
+    short_cross_threshold: float = 80.0,
+    require_macd_positive: bool = True,
+    require_ma_bull: bool = True,
+    max_ma20_distance: float = 0.15,
+    max_ret5: float = 0.18,
+    max_age_sessions: int = 3,
+    max_distance_from_entry: float = 0.08,
+    ma_cross_bonus: float = 4.0,
+    bb_breakout_bonus: float = 6.0,
+) -> pd.DataFrame:
+    """Return only fresh entry opportunities, never stale momentum leaders.
+
+    The most recent historical entry event is attached to the latest session.
+    A setup expires after the configured age or once price is too far above the
+    original entry reference price.
+    """
+    if scored_history is None or scored_history.empty or top_n <= 0:
+        return pd.DataFrame()
+
+    x = scored_history.copy()
+    x['date'] = pd.to_datetime(x['date']).dt.normalize()
+    x = x.sort_values(['ticker','date']).reset_index(drop=True)
+    latest_date = x['date'].max()
+    latest = x[x['date'].eq(latest_date)].copy()
+
+    events = build_entry_signal_history(
+        x,
+        min_sector_score=min_sector_score,
+        min_leadership_score=min_leadership_score,
+        min_short_score=min_short_score,
+        min_long_score=min_long_score,
+        short_cross_threshold=short_cross_threshold,
+        require_macd_positive=require_macd_positive,
+        require_ma_bull=require_ma_bull,
+        max_ma20_distance=max_ma20_distance,
+        max_ret5=max_ret5,
+        ma_cross_bonus=ma_cross_bonus,
+        bb_breakout_bonus=bb_breakout_bonus,
     )
-    x['ma_status'] = np.where(
-        x['ma_bull'].fillna(False).astype(bool),
-        'MA20 > MA50',
-        'KHÔNG',
+    if events.empty:
+        return pd.DataFrame()
+
+    recent_events = events.sort_values(['ticker','entry_date']).groupby('ticker', as_index=False).tail(1)
+    current_cols = [
+        'ticker','sector','close','sector_score','leadership_score','short_momentum_score',
+        'long_momentum_score','flow_score','trend_score','ma20_distance','ret_5',
+        'macd_positive','ma_bull','stage',
+    ]
+    current = latest[[col for col in current_cols if col in latest.columns]].copy().rename(columns={
+        'close':'current_price',
+        'sector_score':'sector_score_current',
+        'leadership_score':'leadership_score_current',
+        'short_momentum_score':'short_momentum_score_current',
+        'long_momentum_score':'long_momentum_score_current',
+        'flow_score':'flow_score_current',
+        'trend_score':'trend_score_current',
+        'ma20_distance':'ma20_distance_current',
+        'ret_5':'ret_5_current',
+        'macd_positive':'macd_positive_current',
+        'ma_bull':'ma_bull_current',
+        'stage':'stage_current',
+    })
+    merged = current.merge(recent_events, on=['ticker','sector'], how='inner')
+    if merged.empty:
+        return pd.DataFrame()
+
+    age_map = {}
+    for ticker, g in x.groupby('ticker'):
+        dates = g['date'].drop_duplicates().sort_values().tolist()
+        pos = {pd.Timestamp(d): i for i,d in enumerate(dates)}
+        age_map[str(ticker)] = (pos, len(dates)-1)
+
+    ages=[]
+    for _, row in merged.iterrows():
+        pos,last_i = age_map.get(str(row['ticker']), ({},0))
+        entry_i = pos.get(pd.Timestamp(row['entry_date']), last_i)
+        ages.append(max(0, last_i-entry_i))
+    merged['entry_age_sessions'] = ages
+    merged['current_price'] = pd.to_numeric(merged['current_price'], errors='coerce')
+    merged['since_entry_pct'] = merged['current_price'] / pd.to_numeric(merged['entry_price'], errors='coerce') - 1
+
+    current_ok = (
+        pd.to_numeric(merged['sector_score_current'], errors='coerce').ge(float(min_sector_score))
+        & pd.to_numeric(merged['ma20_distance_current'], errors='coerce').le(float(max_ma20_distance))
+        & pd.to_numeric(merged['ret_5_current'], errors='coerce').le(float(max_ret5))
+        & merged['entry_age_sessions'].le(int(max_age_sessions))
+        & merged['since_entry_pct'].le(float(max_distance_from_entry))
     )
-    x = x.sort_values(
-        ['entry_score','sector_score','leadership_score','short_momentum_score'],
+    if require_macd_positive:
+        current_ok &= merged['macd_positive_current'].fillna(False).astype(bool)
+    if require_ma_bull:
+        current_ok &= merged['ma_bull_current'].fillna(False).astype(bool)
+
+    out = merged.loc[current_ok].copy()
+    if out.empty:
+        return pd.DataFrame()
+
+    out['fresh_entry_score'] = (
+        pd.to_numeric(out['entry_score'], errors='coerce')
+        - 1.5 * out['entry_age_sessions']
+        - 35.0 * out['since_entry_pct'].clip(lower=0)
+    )
+    out = out.sort_values(
+        ['fresh_entry_score','entry_score','sector_score_current','leadership_score_current'],
         ascending=False,
     ).head(top_n).reset_index(drop=True)
-    x['entry_rank'] = x.index + 1
+    out['entry_rank'] = out.index + 1
+    out['macd_status'] = 'DƯƠNG'
+    out['ma_status'] = 'MA20 > MA50'
+    out['technical_setup'] = out['entry_reason']
+
     cols = [
-        'entry_rank','ticker','sector','entry_score','sector_score','leadership_score',
-        'short_momentum_score','long_momentum_score','flow_score','trend_score',
-        'macd','macd_signal','macd_hist','macd_status','ma20','ma50','ma_status',
-        'ma_cross_recent_10','bb_breakout_after_squeeze','technical_setup','stage',
+        'entry_rank','ticker','sector','entry_date','entry_price','current_price',
+        'since_entry_pct','entry_age_sessions','fresh_entry_score','entry_score','entry_reason',
+        'sector_score_current','leadership_score_current','short_momentum_score_current',
+        'long_momentum_score_current','flow_score_current','trend_score_current',
+        'macd_status','ma_status','stage_current',
     ]
-    return x[[col for col in cols if col in x.columns]]
+    out = out[[col for col in cols if col in out.columns]].rename(columns={
+        'fresh_entry_score':'entry_score_current',
+        'sector_score_current':'sector_score',
+        'leadership_score_current':'leadership_score',
+        'short_momentum_score_current':'short_momentum_score',
+        'long_momentum_score_current':'long_momentum_score',
+        'flow_score_current':'flow_score',
+        'trend_score_current':'trend_score',
+        'stage_current':'stage',
+    })
+    return out

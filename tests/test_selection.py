@@ -6,7 +6,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
-from marketflow.selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates
+from marketflow.selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history
 
 
 def test_detects_new_short_and_long_entries():
@@ -49,32 +49,40 @@ def test_model_portfolio_is_sector_first_and_capped():
     assert abs(port['weight'].sum() - 100) < 1e-9
 
 
-def test_entry_candidates_require_macd_and_ma_and_bonus_squeeze():
-    latest = pd.DataFrame([
-        {
-            'ticker':'AAA','sector':'Bank','sector_score':88,'leadership_score':90,
-            'short_momentum_score':92,'long_momentum_score':86,'flow_score':89,'trend_score':88,
-            'macd':1.2,'macd_signal':0.8,'macd_hist':0.4,'macd_positive':True,
-            'ma20':30,'ma50':28,'ma_bull':True,'ma_cross_recent_10':False,
-            'bb_breakout_after_squeeze':True,'stage':'LEADER',
-        },
-        {
-            'ticker':'BBB','sector':'Tech','sector_score':85,'leadership_score':91,
-            'short_momentum_score':90,'long_momentum_score':90,'flow_score':90,'trend_score':90,
-            'macd':1.0,'macd_signal':0.7,'macd_hist':0.3,'macd_positive':True,
-            'ma20':50,'ma50':47,'ma_bull':True,'ma_cross_recent_10':True,
-            'bb_breakout_after_squeeze':False,'stage':'LEADER',
-        },
-        {
-            'ticker':'CCC','sector':'Oil','sector_score':95,'leadership_score':95,
-            'short_momentum_score':95,'long_momentum_score':95,'flow_score':95,'trend_score':95,
-            'macd':-0.2,'macd_signal':-0.3,'macd_hist':0.1,'macd_positive':False,
-            'ma20':40,'ma50':38,'ma_bull':True,'ma_cross_recent_10':True,
-            'bb_breakout_after_squeeze':True,'stage':'LEADER',
-        },
-    ])
-    out = build_entry_candidates(latest, top_n=3)
-    assert set(out['ticker']) == {'AAA','BBB'}
-    assert 'CCC' not in out['ticker'].tolist()
-    assert out.iloc[0]['ticker'] == 'AAA'
-    assert out.iloc[0]['technical_setup'] == 'BB squeeze breakout'
+
+def test_entry_signals_are_fresh_and_reject_late_chase():
+    dates = pd.date_range('2026-09-10', periods=5, freq='B')
+    rows = []
+    # AAA gets a fresh short-momentum/MACD trigger on the last session.
+    for i,d in enumerate(dates):
+        rows.append({
+            'date':d,'ticker':'AAA','sector':'Bank','close':30+i*.3,
+            'sector_score':80,'leadership_score':78+i,
+            'short_momentum_score':[72,74,76,79,84][i],
+            'long_momentum_score':82,'flow_score':84,'trend_score':82,
+            'ret_5':.08,'ma20_distance':.09,'macd':.5,
+            'macd_hist':[-.2,-.1,-.05,-.02,.2][i],
+            'macd_positive':i==4,'ma_bull':True,'ma_cross_up':False,
+            'bb_breakout_after_squeeze':False,'ma20':28,'ma50':27,'stage':'LEADER',
+        })
+    # BBB had a valid MA cross four sessions ago but has since run +25% and is stale.
+    for i,d in enumerate(dates):
+        rows.append({
+            'date':d,'ticker':'BBB','sector':'Tech','close':[40,41,44,47,50][i],
+            'sector_score':88,'leadership_score':90,
+            'short_momentum_score':88,'long_momentum_score':86,'flow_score':90,'trend_score':88,
+            'ret_5':[.04,.05,.10,.16,.25][i],
+            'ma20_distance':[.07,.08,.11,.17,.24][i],
+            'macd':1.0,'macd_hist':.3,'macd_positive':True,'ma_bull':True,
+            'ma_cross_up':i==0,'bb_breakout_after_squeeze':False,
+            'ma20':39,'ma50':38,'stage':'LEADER',
+        })
+    hist = pd.DataFrame(rows)
+    events = build_entry_signal_history(hist)
+    assert set(events['ticker']) == {'AAA','BBB'}
+    assert events[events['ticker'].eq('BBB')]['entry_date'].iloc[-1] == dates[0]
+
+    out = build_entry_candidates(hist, top_n=3, max_age_sessions=3, max_distance_from_entry=.08)
+    assert out['ticker'].tolist() == ['AAA']
+    assert out.iloc[0]['entry_age_sessions'] == 0
+    assert abs(out.iloc[0]['since_entry_pct']) < 1e-9

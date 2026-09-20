@@ -89,6 +89,10 @@ The GitHub Pages dashboard is designed as a compact research terminal rather tha
 
 The opportunity monitor uses two independent cross-sectional scores (0–100): **short momentum** emphasizes 5/20-session relative strength, liquidity expansion and MA20 participation; **long momentum** emphasizes 60/120-session relative strength, MA50 structure and 52-week positioning. A new opportunity appears only on a threshold crossing, with a default threshold of 80 and Sector Score confirmation of at least 50.
 
+The **entry model** is separate from the strength ranking. It records a causal entry date only when a fresh trigger occurs (momentum threshold cross, bullish MA20/MA50 cross, positive MACD turn, or Bollinger-squeeze breakout), while MACD/MA/sector-quality gates are satisfied and the stock is not already extended. The default anti-chase rules reject names more than 15% above MA20, up more than 18% in five sessions, older than three sessions from the entry event, or more than 8% above the recorded entry price. Entry events are versioned in Supabase so future charts can distinguish live-issued signals from methodology changes.
+
+The dashboard also contains an all-stock six-month technical chart explorer. It plots candlesticks, volume, MA20/MA50, Bollinger Bands, MACD, historical model-entry markers and the return from the latest entry reference price to the current session.
+
 ## Outputs
 
 - `docs/index.html` — GitHub Pages dashboard after the first full successful production run.
@@ -98,6 +102,7 @@ The opportunity monitor uses two independent cross-sectional scores (0–100): *
 - `outputs/opportunities_short_latest.csv`
 - `outputs/opportunities_long_latest.csv`
 - `outputs/model_portfolio_10.csv`
+- `outputs/entry_signal_history.csv`
 - `outputs/scores_history.parquet` — rolling computation window, not the long-term source of truth.
 - Supabase `mf_*` tables — long-term production history when configured.
 
