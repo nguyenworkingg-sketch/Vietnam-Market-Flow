@@ -90,8 +90,8 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
         h['close'] = [30.15+i*.03, 28.5+i*.02, 26.5+i*.02, 24.5+i*.02, 23, 21]
         h['ma20'] = [30.0,28.0,26.0,24.0,22.0,20.0]
         h['ma20_distance'] = h['close']/h['ma20']-1
-        h['macd_hist'] = [.02+.005*i,.18,.16,.14,0,-.1]
-        h['macd_positive'] = [True,True,True,True,False,False]
+        h['macd_hist'] = [-.08+.005*i,.18,.16,.14,0,-.1]
+        h['macd_positive'] = [False,True,True,True,False,False]
         h['short_momentum_score'] = [82,82,80,76,61,42]
         h['long_momentum_score'] = [84,83,79,81,58,45]
         if i == 8:
@@ -102,6 +102,7 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
             h.loc[h['ticker'].eq('AAA'),'close'] = 30.40
             h.loc[h['ticker'].eq('AAA'),'ma20_distance'] = 30.40/30.0-1
             h.loc[h['ticker'].eq('AAA'),'macd_hist'] = .09
+            h.loc[h['ticker'].eq('AAA'),'macd_positive'] = True
         history_frames.append(h)
     scored_history = pd.concat(history_frames, ignore_index=True)
     latest = scored_history[scored_history['date'].eq(pd.Timestamp('2026-09-18'))].copy()
