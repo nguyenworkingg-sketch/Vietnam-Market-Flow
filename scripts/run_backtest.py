@@ -9,7 +9,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
-from marketflow.backtest import run_research_suite
+from marketflow.backtest import run_research_suite, entry_signal_study
 from marketflow.dashboard import render_dashboard
 
 
@@ -35,6 +35,13 @@ def main():
     for name in ['deciles', 'stage_entries', 'ic_daily', 'ic_summary', 'summary']:
         suite[name].to_csv(out/f'{name}.csv', index=False)
 
+    entry_path = ROOT/'outputs'/'entry_signal_history.csv'
+    entry_summary = pd.DataFrame()
+    if entry_path.exists():
+        entries = pd.read_csv(entry_path, parse_dates=['entry_date'])
+        entry_summary = entry_signal_study(suite['prepared'], entries, horizons=(5,20,60))
+        entry_summary.to_csv(out/'entry_signal_summary.csv', index=False)
+
     # Re-render the final published dashboard after research diagnostics exist,
     # so the web page includes validation charts from the same production run.
     latest = pd.read_csv(ROOT/'outputs'/'scores_latest.csv', parse_dates=['date'])
@@ -58,6 +65,7 @@ def main():
         'ic_daily': suite['ic_daily'],
         'stage_entries': suite['stage_entries'],
         'ic_summary': suite['ic_summary'],
+        'entry_signal_summary': entry_summary,
     }
     cfg = yaml.safe_load((ROOT/'config'/'model.yaml').read_text(encoding='utf-8'))
     opp_cfg = cfg.get('opportunities', {})

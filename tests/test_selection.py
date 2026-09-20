@@ -50,39 +50,57 @@ def test_model_portfolio_is_sector_first_and_capped():
 
 
 
-def test_entry_signals_are_fresh_and_reject_late_chase():
-    dates = pd.date_range('2026-09-10', periods=5, freq='B')
+
+def test_entry_v3_requires_persistent_htf_strength_and_rejects_chase():
+    dates = pd.date_range('2026-09-07', periods=10, freq='B')
     rows = []
-    # AAA gets a fresh short-momentum/MACD trigger on the last session.
+
+    # AAA has persistent real strength, then resumes above MA20 on the last day.
     for i,d in enumerate(dates):
+        close = 30.0 + i*.05
+        ma20 = 30.1
+        if i == 8:
+            close = 30.05
+        if i == 9:
+            close = 30.25
         rows.append({
-            'date':d,'ticker':'AAA','sector':'Bank','close':30+i*.3,
-            'sector_score':80,'leadership_score':78+i,
-            'short_momentum_score':[72,74,76,79,84][i],
-            'long_momentum_score':82,'flow_score':84,'trend_score':82,
-            'ret_5':.08,'ma20_distance':.09,'macd':.5,
-            'macd_hist':[-.2,-.1,-.05,-.02,.2][i],
-            'macd_positive':i==4,'ma_bull':True,'ma_cross_up':False,
-            'bb_breakout_after_squeeze':False,'ma20':28,'ma50':27,'stage':'LEADER',
+            'date':d,'ticker':'AAA','sector':'Bank','close':close,
+            'sector_score':78,'leadership_score':82,'short_momentum_score':76,
+            'long_momentum_score':80,'flow_score':82,'trend_score':84,
+            'ret_5':.03,'ma20':ma20,'ma20_distance':close/ma20-1,'ma50':28.5,
+            'macd':.45,'macd_hist':[-.08,-.07,-.06,-.05,-.04,-.03,-.02,-.01,-.005,.09][i],
+            'macd_positive':i==9,'volume_ratio_20':1.15,
+            'bb_squeeze_recent_10':False,'bb_breakout_after_squeeze':False,
+            'prior_high_10':31.0,'medium_trend_confirm':True,'weekly_trend_confirm':True,
+            'weekly_ret12':.12,'rs_60':.10,'rs_120':.16,'rs_sector_60':.05,'sector_rs_60':.06,
+            'stage':'LEADER',
         })
-    # BBB had a valid MA cross four sessions ago but has since run +25% and is stale.
+
+    # BBB generated a valid pullback entry several sessions ago, but price is now
+    # more than 5% above that entry and therefore must not be a fresh candidate.
     for i,d in enumerate(dates):
+        close = [40,40.1,40.2,40.3,40.2,40.4,41.2,42.0,43.0,44.0][i]
+        ma20 = 40.3
         rows.append({
-            'date':d,'ticker':'BBB','sector':'Tech','close':[40,41,44,47,50][i],
-            'sector_score':88,'leadership_score':90,
-            'short_momentum_score':88,'long_momentum_score':86,'flow_score':90,'trend_score':88,
-            'ret_5':[.04,.05,.10,.16,.25][i],
-            'ma20_distance':[.07,.08,.11,.17,.24][i],
-            'macd':1.0,'macd_hist':.3,'macd_positive':True,'ma_bull':True,
-            'ma_cross_up':i==0,'bb_breakout_after_squeeze':False,
-            'ma20':39,'ma50':38,'stage':'LEADER',
+            'date':d,'ticker':'BBB','sector':'Tech','close':close,
+            'sector_score':86,'leadership_score':88,'short_momentum_score':82,
+            'long_momentum_score':84,'flow_score':88,'trend_score':86,
+            'ret_5':.04 if i<7 else .09,'ma20':ma20,'ma20_distance':close/ma20-1,'ma50':38.0,
+            'macd':.6,'macd_hist':[-.03,-.02,-.01,.01,.02,.08,.09,.1,.11,.12][i],
+            'macd_positive':i>=3,'volume_ratio_20':1.2,
+            'bb_squeeze_recent_10':False,'bb_breakout_after_squeeze':False,
+            'prior_high_10':45.0,'medium_trend_confirm':True,'weekly_trend_confirm':True,
+            'weekly_ret12':.15,'rs_60':.12,'rs_120':.18,'rs_sector_60':.06,'sector_rs_60':.08,
+            'stage':'LEADER',
         })
+
     hist = pd.DataFrame(rows)
     events = build_entry_signal_history(hist)
     assert set(events['ticker']) == {'AAA','BBB'}
-    assert events[events['ticker'].eq('BBB')]['entry_date'].iloc[-1] == dates[0]
+    assert events[events['ticker'].eq('AAA')]['entry_date'].iloc[-1] == dates[-1]
+    assert events[events['ticker'].eq('BBB')]['entry_date'].iloc[-1] == dates[5]
 
-    out = build_entry_candidates(hist, top_n=3, max_age_sessions=3, max_distance_from_entry=.08)
+    out = build_entry_candidates(hist, top_n=3, max_age_sessions=2, max_distance_from_entry=.05)
     assert out['ticker'].tolist() == ['AAA']
     assert out.iloc[0]['entry_age_sessions'] == 0
     assert abs(out.iloc[0]['since_entry_pct']) < 1e-9
