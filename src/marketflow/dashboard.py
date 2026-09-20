@@ -262,6 +262,215 @@ def _candidate_charts(price_history: pd.DataFrame | None, entry_candidates: pd.D
     return ''.join(cards)
 
 
+
+def _stock_chart_explorer(
+    price_history: pd.DataFrame | None,
+    entry_events: pd.DataFrame | None,
+    latest: pd.DataFrame,
+    default_ticker: str | None = None,
+    days: int = 126,
+) -> str:
+    if price_history is None or price_history.empty:
+        return "<div class='empty'>Chưa có dữ liệu giá cho Stock Chart Explorer.</div>"
+
+    cols = [
+        'date','ticker','open','high','low','close','volume',
+        'ma20','ma50','bb_upper','bb_lower','macd','macd_signal','macd_hist',
+    ]
+    if not {'date','ticker','open','high','low','close','volume'}.issubset(price_history.columns):
+        return "<div class='empty'>Thiếu OHLCV cho Stock Chart Explorer.</div>"
+
+    p = price_history[[col for col in cols if col in price_history.columns]].copy()
+    p['date'] = pd.to_datetime(p['date'])
+    p = (p.sort_values(['ticker','date'])
+         .groupby('ticker', group_keys=False)
+         .tail(days))
+    tickers = sorted(set(latest['ticker'].astype(str)) & set(p['ticker'].astype(str)))
+    if not tickers:
+        return "<div class='empty'>Không có mã phù hợp để hiển thị chart.</div>"
+
+    def clean(v, digits=4):
+        if pd.isna(v):
+            return None
+        try:
+            return round(float(v), digits)
+        except Exception:
+            return None
+
+    payload = {}
+    for ticker, g in p[p['ticker'].astype(str).isin(tickers)].groupby('ticker'):
+        rows=[]
+        for _,r in g.iterrows():
+            rows.append([
+                pd.Timestamp(r['date']).strftime('%Y-%m-%d'),
+                clean(r.get('open')), clean(r.get('high')), clean(r.get('low')), clean(r.get('close')),
+                clean(r.get('volume'),0),
+                clean(r.get('ma20')), clean(r.get('ma50')), clean(r.get('bb_upper')), clean(r.get('bb_lower')),
+                clean(r.get('macd')), clean(r.get('macd_signal')), clean(r.get('macd_hist')),
+            ])
+        payload[str(ticker)] = rows
+
+    sig_payload = {ticker: [] for ticker in tickers}
+    if entry_events is not None and not entry_events.empty:
+        e = entry_events.copy()
+        e['entry_date'] = pd.to_datetime(e['entry_date'])
+        cutoff = p['date'].min()
+        e = e[e['entry_date'].ge(cutoff)]
+        for ticker,g in e[e['ticker'].astype(str).isin(tickers)].groupby('ticker'):
+            sig_payload[str(ticker)] = [
+                [
+                    pd.Timestamp(r['entry_date']).strftime('%Y-%m-%d'),
+                    clean(r.get('entry_price')),
+                    clean(r.get('entry_score')),
+                    str(r.get('entry_reason','Entry')),
+                ]
+                for _,r in g.tail(6).iterrows()
+            ]
+
+    current = {}
+    for _,r in latest[latest['ticker'].astype(str).isin(tickers)].iterrows():
+        current[str(r['ticker'])] = {
+            'sector': str(r.get('sector','')),
+            'leadership': clean(r.get('leadership_score')),
+            'short': clean(r.get('short_momentum_score')),
+            'long': clean(r.get('long_momentum_score')),
+            'ma20_distance': clean(r.get('ma20_distance')),
+            'ret5': clean(r.get('ret_5')),
+        }
+
+    if default_ticker not in tickers:
+        default_ticker = tickers[0]
+    options=''.join(
+        f"<option value='{html.escape(t)}'{' selected' if t==default_ticker else ''}>{html.escape(t)}"
+        f"{' · '+html.escape(str(current.get(t,{}).get('sector',''))) if current.get(t,{}).get('sector') else ''}</option>"
+        for t in tickers
+    )
+    data_json = json.dumps(payload, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
+    sig_json = json.dumps(sig_payload, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
+    cur_json = json.dumps(current, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
+
+    return f"""
+    <div class='stock-explorer-controls'>
+      <label for='stock-chart-select'>Chọn cổ phiếu</label>
+      <select id='stock-chart-select'>{options}</select>
+      <span id='stock-chart-summary' class='chart-meta'></span>
+    </div>
+    <div class='canvas-wrap'><canvas id='stock-chart-canvas' height='700'></canvas></div>
+    <script type='application/json' id='stock-chart-data'>{data_json}</script>
+    <script type='application/json' id='stock-signal-data'>{sig_json}</script>
+    <script type='application/json' id='stock-current-data'>{cur_json}</script>
+    <script>
+    (() => {{
+      const DATA=JSON.parse(document.getElementById('stock-chart-data').textContent);
+      const SIG=JSON.parse(document.getElementById('stock-signal-data').textContent);
+      const CUR=JSON.parse(document.getElementById('stock-current-data').textContent);
+      const select=document.getElementById('stock-chart-select');
+      const canvas=document.getElementById('stock-chart-canvas');
+      const summary=document.getElementById('stock-chart-summary');
+      const ctx=canvas.getContext('2d');
+
+      function line(points,color,width=1,dash=[]) {{
+        ctx.save(); ctx.strokeStyle=color; ctx.lineWidth=width; ctx.setLineDash(dash);
+        ctx.beginPath(); let started=false;
+        for(const p of points) {{
+          if(p[1]==null || !Number.isFinite(p[1])) {{started=false; continue;}}
+          if(!started){{ctx.moveTo(p[0],p[1]);started=true;}} else ctx.lineTo(p[0],p[1]);
+        }}
+        ctx.stroke(); ctx.restore();
+      }}
+      function fmt(v,d=1){{return Number.isFinite(v)?v.toFixed(d):'—';}}
+      function draw(ticker) {{
+        const rows=DATA[ticker]||[]; if(!rows.length)return;
+        const dpr=window.devicePixelRatio||1;
+        const cssW=Math.max(900,canvas.parentElement.clientWidth-2), cssH=700;
+        canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
+        canvas.width=Math.floor(cssW*dpr); canvas.height=Math.floor(cssH*dpr);
+        ctx.setTransform(dpr,0,0,dpr,0,0);
+        ctx.clearRect(0,0,cssW,cssH);
+        ctx.fillStyle='#07111f';ctx.fillRect(0,0,cssW,cssH);
+
+        const L=54,R=70,PT=24,PB=440,VT=330,VB=440,MT=505,MB=660,W=cssW-L-R;
+        const lows=rows.map(r=>r[3]).filter(Number.isFinite), highs=rows.map(r=>r[2]).filter(Number.isFinite);
+        const bbl=rows.map(r=>r[9]).filter(Number.isFinite), bbu=rows.map(r=>r[8]).filter(Number.isFinite);
+        let pmin=Math.min(...lows,...bbl), pmax=Math.max(...highs,...bbu);
+        const pad=(pmax-pmin)*.05||1;pmin-=pad;pmax+=pad;
+        const vmax=Math.max(1,...rows.map(r=>r[5]||0));
+        const macVals=rows.flatMap(r=>[r[10],r[11],r[12]]).filter(Number.isFinite);
+        const mlim=Math.max(.001,...macVals.map(Math.abs))*1.12;
+        const step=W/rows.length, cw=Math.max(1.4,Math.min(7,step*.62));
+        const sx=i=>L+(i+.5)*step, sy=v=>PT+(pmax-v)/(pmax-pmin)*(PB-PT);
+        const vy=v=>VB-(v||0)/vmax*(VB-VT), my=v=>MT+(mlim-v)/(2*mlim)*(MB-MT);
+
+        ctx.strokeStyle='#1a2a40';ctx.lineWidth=1;ctx.fillStyle='#93a6c0';ctx.font='10px system-ui';
+        for(let k=0;k<6;k++){{const f=k/5,y=PT+f*(PB-PT),v=pmax-f*(pmax-pmin);ctx.beginPath();ctx.moveTo(L,y);ctx.lineTo(cssW-R,y);ctx.stroke();ctx.fillText(v.toFixed(1),cssW-R+8,y+3);}}
+        for(let k=0;k<7;k++){{const x=L+k/6*W;ctx.beginPath();ctx.moveTo(x,PT);ctx.lineTo(x,MB);ctx.stroke();}}
+
+        for(let i=0;i<rows.length;i++) {{
+          const r=rows[i], up=r[4]>=r[1], x=sx(i), yv=vy(r[5]);
+          ctx.fillStyle=up?'rgba(22,121,111,.75)':'rgba(167,61,75,.72)';
+          ctx.fillRect(x-cw/2,yv,cw,Math.max(.8,VB-yv));
+        }}
+        line(rows.map((r,i)=>[sx(i),r[8]==null?null:sy(r[8])]),'#7186a5',1,[3,4]);
+        line(rows.map((r,i)=>[sx(i),r[9]==null?null:sy(r[9])]),'#7186a5',1,[3,4]);
+        line(rows.map((r,i)=>[sx(i),r[6]==null?null:sy(r[6])]),'#45d483',1.5);
+        line(rows.map((r,i)=>[sx(i),r[7]==null?null:sy(r[7])]),'#f2bf55',1.5);
+
+        for(let i=0;i<rows.length;i++) {{
+          const r=rows[i],up=r[4]>=r[1],x=sx(i),color=up?'#18a999':'#ef4d61';
+          const yhi=sy(r[2]),ylo=sy(r[3]),yo=sy(r[1]),yc=sy(r[4]);
+          ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=1;
+          ctx.beginPath();ctx.moveTo(x,yhi);ctx.lineTo(x,ylo);ctx.stroke();
+          ctx.fillRect(x-cw/2,Math.min(yo,yc),cw,Math.max(1.2,Math.abs(yc-yo)));
+        }}
+
+        const zero=my(0);ctx.strokeStyle='#40516d';ctx.beginPath();ctx.moveTo(L,zero);ctx.lineTo(cssW-R,zero);ctx.stroke();
+        for(let i=0;i<rows.length;i++) {{
+          const h=rows[i][12];if(!Number.isFinite(h))continue;const y=my(h),x=sx(i);
+          ctx.fillStyle=h>=0?'#61d4c7':'#f16978';ctx.fillRect(x-cw*.42,Math.min(y,zero),Math.max(2,cw*.84),Math.max(1,Math.abs(zero-y)));
+        }}
+        line(rows.map((r,i)=>[sx(i),r[10]==null?null:my(r[10])]),'#3da5ff',1.7);
+        line(rows.map((r,i)=>[sx(i),r[11]==null?null:my(r[11])]),'#ff8a3d',1.7);
+
+        ctx.fillStyle='#c2cee0';ctx.font='600 11px system-ui';ctx.fillText('MACD (12,26,9)',L,MT-28);
+        ctx.fillStyle='#45d483';ctx.fillText('MA20',L+120,MT-28);ctx.fillStyle='#f2bf55';ctx.fillText('MA50',L+166,MT-28);
+        ctx.fillStyle='#91a5c2';ctx.fillText('Bollinger Bands',L+212,MT-28);
+
+        const dateIndex=Object.fromEntries(rows.map((r,i)=>[r[0],i]));
+        const events=(SIG[ticker]||[]).filter(e=>dateIndex[e[0]]!==undefined);
+        for(const e of events) {{
+          const idx=dateIndex[e[0]],x=sx(idx),y=sy(e[1]);
+          ctx.strokeStyle='#45d483';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x,y+5);ctx.lineTo(x,Math.min(PB-35,y+48));ctx.stroke();ctx.setLineDash([]);
+          ctx.fillStyle='#45d483';ctx.beginPath();ctx.moveTo(x,y+1);ctx.lineTo(x-6,y+10);ctx.lineTo(x+6,y+10);ctx.closePath();ctx.fill();
+          ctx.fillStyle='#102d28';ctx.strokeStyle='#45d483';ctx.lineWidth=1;
+          const bx=Math.min(cssW-R-176,Math.max(L+4,x-75)),by=Math.min(PB-34,Math.max(PT+8,y+18));
+          ctx.fillRect(bx,by,172,32);ctx.strokeRect(bx,by,172,32);
+          ctx.fillStyle='#9ef0bd';ctx.font='700 10px system-ui';ctx.fillText('ENTRY '+e[0].split('-').reverse().join('/'),bx+7,by+13);
+          ctx.fillStyle='#e7fff0';ctx.font='600 10px system-ui';ctx.fillText(fmt(e[1])+' · '+e[3],bx+7,by+26);
+        }}
+        if(events.length) {{
+          const e=events[events.length-1],idx=dateIndex[e[0]],ep=e[1],y=sy(ep),last=rows[rows.length-1][4],perf=last/ep-1;
+          ctx.strokeStyle='#45d483';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
+          ctx.fillStyle=perf>=0?'#83e7aa':'#f1919e';ctx.font='700 11px system-ui';ctx.fillText('Từ entry '+(perf*100>=0?'+':'')+(perf*100).toFixed(1)+'%',Math.max(L,sx(rows.length-1)-105),y-7);
+        }}
+
+        const ticks=[0,.2,.4,.6,.8,1];
+        ctx.fillStyle='#93a6c0';ctx.font='10px system-ui';
+        for(const f of ticks){{const i=Math.min(rows.length-1,Math.round(f*(rows.length-1)));ctx.fillText(rows[i][0].slice(5,7)+'/'+rows[i][0].slice(0,4),sx(i)-16,690);}}
+        const meta=CUR[ticker]||{{}};
+        const ev=events.length?events[events.length-1]:null;
+        const last=rows[rows.length-1][4];
+        let s=(meta.sector||'')+' · Leadership '+fmt(meta.leadership)+' · SM NH '+fmt(meta.short)+' · SM DH '+fmt(meta.long);
+        if(ev) s+=' · Entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
+        else s+=' · Chưa có entry signal trong 6 tháng';
+        summary.textContent=s;
+      }}
+      select.addEventListener('change',()=>draw(select.value));
+      new ResizeObserver(()=>draw(select.value)).observe(canvas.parentElement);
+      draw(select.value);
+    }})();
+    </script>
+    """
+
 def _rotation_svg(sectors: pd.DataFrame, width=980, height=440) -> str:
     if sectors.empty:
         return "<div class='empty'>Chưa đủ dữ liệu ngành.</div>"
