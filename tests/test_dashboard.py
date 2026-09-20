@@ -14,6 +14,7 @@ def _latest():
         'date': pd.to_datetime(['2026-09-18']*6),
         'ticker': ['AAA','BBB','CCC','DDD','EEE','FFF'],
         'sector': ['Ngân hàng','Ngân hàng','Công nghệ','Điện','BĐS','BĐS'],
+        'close': [31.0,29.0,27.0,25.0,23.0,21.0],
         'leadership_score': [92,85,78,68,55,48],
         'short_momentum_score': [88,82,84,76,61,42],
         'long_momentum_score': [86,83,79,81,58,45],
@@ -30,7 +31,10 @@ def _latest():
         'ma20': [30,28,26,24,22,20],
         'ma50': [28,27,25,23,23,21],
         'ma_bull': [True,True,True,True,False,False],
+        'ma_cross_up': [False,False,False,False,False,False],
         'ma_cross_recent_10': [False,True,False,False,False,False],
+        'ma20_distance': [.08,.07,.06,.05,.04,.03],
+        'ret_5': [.08,.06,.07,.05,.02,-.01],
         'bb_breakout_after_squeeze': [True,False,False,False,False,False],
     })
 
@@ -69,6 +73,8 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     previous = latest.copy()
     previous['date'] = pd.Timestamp('2026-09-17')
     previous['short_momentum_score'] = [75,82,76,76,61,42]
+    previous['macd_hist'] = [-.1,.3,.3,.2,0,-.1]
+    previous['macd_positive'] = [False,True,True,True,False,False]
     previous['long_momentum_score'] = [86,77,79,74,58,45]
     scored_history = pd.concat([previous, latest], ignore_index=True)
 
@@ -107,6 +113,8 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert 'Điểm dẫn dắt × tăng tốc' in text
     assert 'Biểu đồ nến · Volume · MACD' in text
     assert 'MACD (12,26,9)' in text
-    assert 'MỞ VỊ THẾ · MODEL' in text
+    assert 'ENTRY 18/09/2026' in text
+    assert 'Biểu đồ kỹ thuật toàn bộ cổ phiếu' in text
+    assert "id='stock-chart-select'" in text
     assert 'Alpha theo decile' in text
     assert '<svg' in text
