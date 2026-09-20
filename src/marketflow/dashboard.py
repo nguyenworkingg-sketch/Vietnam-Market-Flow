@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 import html
+import json
 import math
 import numpy as np
 import pandas as pd
 
-from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates
+from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history
 
 
 DISPLAY = {
@@ -33,6 +34,12 @@ DISPLAY = {
     'macd_status': 'MACD',
     'ma_status': 'MA cross',
     'technical_setup': 'Technical setup',
+    'entry_date': 'Ngày mở vị thế',
+    'entry_price': 'Giá entry',
+    'current_price': 'Giá hiện tại',
+    'since_entry_pct': 'Từ entry %',
+    'entry_age_sessions': 'Số phiên từ entry',
+    'entry_reason': 'Trigger',
 }
 
 STAGE_VI = {
@@ -67,7 +74,7 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
 
 
 
-def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 126, width: int = 1400, height: int = 720, entry_score: float | None = None) -> str:
+def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 126, width: int = 1400, height: int = 720, entry_events: pd.DataFrame | None = None) -> str:
     if price_history is None or price_history.empty:
         return "<div class='empty'>Chưa có dữ liệu giá cho biểu đồ nến.</div>"
     required = {'date','ticker','open','high','low','close','volume'}
@@ -167,20 +174,40 @@ def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 
     chunks.append(f"<rect x='{width-right+2}' y='{ly-10:.1f}' width='64' height='20' rx='4' class='last-price-box'/>")
     chunks.append(f"<text x='{width-right+34}' y='{ly+4:.1f}' text-anchor='middle' class='last-price-text'>{last_close:,.1f}</text>")
 
-    # The ranked setup is actionable as of the latest completed session. Mark
-    # that exact candle rather than implying an earlier hindsight entry.
-    entry_x = sx(n-1)
-    marker_y = max(price_top+18, ly-58)
-    label_x = max(left+8, entry_x-178)
-    label_w = 166
-    chunks.append(f"<line x1='{entry_x:.1f}' y1='{ly-5:.1f}' x2='{entry_x:.1f}' y2='{marker_y+29:.1f}' class='entry-guide'/>")
-    chunks.append(
-        f"<polygon points='{entry_x-6:.1f},{ly-12:.1f} {entry_x+6:.1f},{ly-12:.1f} {entry_x:.1f},{ly-3:.1f}' class='entry-arrow'/>"
-    )
-    chunks.append(f"<rect x='{label_x:.1f}' y='{marker_y:.1f}' width='{label_w}' height='34' rx='6' class='entry-box'/>")
-    chunks.append(f"<text x='{label_x+9:.1f}' y='{marker_y+14:.1f}' class='entry-title'>MỞ VỊ THẾ · MODEL</text>")
-    score_txt = '' if entry_score is None or pd.isna(entry_score) else f" · Score {float(entry_score):.1f}"
-    chunks.append(f"<text x='{label_x+9:.1f}' y='{marker_y+27:.1f}' class='entry-sub'>{last_close:,.1f}{score_txt}</text>")
+    # Mark the dates when the model actually generated a causal entry event.
+    if entry_events is not None and not entry_events.empty:
+        ev = entry_events[entry_events['ticker'].astype(str).eq(str(ticker))].copy()
+        if not ev.empty:
+            ev['entry_date'] = pd.to_datetime(ev['entry_date']).dt.normalize()
+            date_to_i = {pd.Timestamp(d).normalize(): i for i,d in enumerate(x['date'])}
+            visible = ev[ev['entry_date'].isin(date_to_i.keys())].sort_values('entry_date').tail(4)
+            for k,(_,erow) in enumerate(visible.iterrows()):
+                idx = date_to_i[pd.Timestamp(erow['entry_date']).normalize()]
+                ex = sx(idx)
+                ep = float(erow['entry_price'])
+                ey = sy_price(ep)
+                label_y = min(price_bottom-50, max(price_top+10, ey+18+22*(k%2)))
+                label_x = min(width-right-174, max(left+4, ex-76))
+                reason = html.escape(str(erow.get('entry_reason','Entry')))
+                score = erow.get('entry_score', np.nan)
+                score_txt = '' if pd.isna(score) else f" · {float(score):.1f}"
+                chunks.append(f"<line x1='{ex:.1f}' y1='{ey+5:.1f}' x2='{ex:.1f}' y2='{label_y:.1f}' class='entry-guide'/>")
+                chunks.append(f"<polygon points='{ex-6:.1f},{ey+10:.1f} {ex+6:.1f},{ey+10:.1f} {ex:.1f},{ey+1:.1f}' class='entry-arrow'/>")
+                chunks.append(f"<rect x='{label_x:.1f}' y='{label_y:.1f}' width='170' height='34' rx='6' class='entry-box'/>")
+                chunks.append(f"<text x='{label_x+8:.1f}' y='{label_y+14:.1f}' class='entry-title'>ENTRY {pd.Timestamp(erow['entry_date']).strftime('%d/%m/%Y')}</text>")
+                chunks.append(f"<text x='{label_x+8:.1f}' y='{label_y+27:.1f}' class='entry-sub'>{ep:,.1f}{score_txt} · {reason}</text>")
+
+            # Compare current price with the most recent model entry.
+            last_ev = visible.iloc[-1] if not visible.empty else None
+            if last_ev is not None:
+                idx = date_to_i[pd.Timestamp(last_ev['entry_date']).normalize()]
+                ep = float(last_ev['entry_price'])
+                ey = sy_price(ep)
+                ex = sx(idx)
+                perf = last_close / ep - 1
+                chunks.append(f"<line x1='{ex:.1f}' y1='{ey:.1f}' x2='{sx(n-1):.1f}' y2='{ey:.1f}' class='entry-price-line'/>")
+                perf_cls = 'entry-perf-pos' if perf >= 0 else 'entry-perf-neg'
+                chunks.append(f"<text x='{min(width-right-6,sx(n-1)-4):.1f}' y='{ey-6:.1f}' text-anchor='end' class='{perf_cls}'>Từ entry: {perf*100:+.1f}%</text>")
 
     chunks.append(f"<line x1='{left}' y1='{macd_top-24}' x2='{width-right}' y2='{macd_top-24}' class='panel-sep'/>")
     zero=sy_macd(0)
@@ -211,19 +238,19 @@ def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 
     return ''.join(chunks)
 
 
-def _candidate_charts(price_history: pd.DataFrame | None, entry_candidates: pd.DataFrame, days: int = 126) -> str:
+def _candidate_charts(price_history: pd.DataFrame | None, entry_candidates: pd.DataFrame, entry_events: pd.DataFrame | None = None, days: int = 126) -> str:
     if price_history is None or price_history.empty or entry_candidates is None or entry_candidates.empty:
         return "<div class='empty'>Chưa có ứng viên hoặc dữ liệu giá để hiển thị chart.</div>"
     cards=[]
     for i,(_,row) in enumerate(entry_candidates.head(3).iterrows()):
         ticker=str(row['ticker'])
-        setup=html.escape(str(row.get('technical_setup','')))
-        score=_num(row.get('entry_score'),1)
+        setup=html.escape(str(row.get('entry_reason',row.get('technical_setup',''))))
+        score=_num(row.get('entry_score_current',row.get('entry_score')),1)
         open_attr=" open" if i==0 else ""
         cards.append(
             f"<details class='price-chart-detail'{open_attr}>"
             f"<summary><span>#{i+1} <b>{html.escape(ticker)}</b></span><span class='chart-meta'>Điểm mở vị thế {score} · {setup}</span></summary>"
-            f"<div class='terminal-chart-wrap'>{_candlestick_macd_svg(price_history,ticker,days=days,entry_score=row.get('entry_score'))}</div>"
+            f"<div class='terminal-chart-wrap'>{_candlestick_macd_svg(price_history,ticker,days=days,entry_events=entry_events)}</div>"
             "</details>"
         )
     return ''.join(cards)
@@ -714,7 +741,7 @@ def render_dashboard(
     table.data{width:100%;border-collapse:collapse;font-size:12px}table.data th,table.data td{padding:8px 8px;border-bottom:1px solid rgba(32,49,76,.66);text-align:right;white-space:nowrap}table.data th:first-child,table.data td:first-child,table.data th:nth-child(2),table.data td:nth-child(2){text-align:left}table.data th{color:#91a5c2;font-weight:650;background:rgba(255,255,255,.014);position:sticky;top:0}.table-wrap{overflow:auto;max-height:515px}
     .mini-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mini-card{padding:13px}.mini-title{font-size:13px;font-weight:750;margin-bottom:9px}.mini-grid{display:grid;grid-template-columns:1fr auto;gap:5px 10px;font-size:11px;color:var(--muted)}.mini-grid b{color:#e5eefc;font-variant-numeric:tabular-nums}
     .readout{margin:0;padding-left:18px;color:#c8d5e8;font-size:13px;line-height:1.65}.readout b{color:white}.disclaimer{margin-top:20px;padding:14px 16px;border:1px solid #2d3d58;background:#0a1423;border-radius:11px;font-size:11px;color:#8da0bc;line-height:1.55}
-    .entry-panel{margin-top:16px;border:1px solid #3b745f;background:linear-gradient(180deg,rgba(19,48,42,.62),rgba(11,26,36,.98));box-shadow:0 16px 42px rgba(0,0,0,.22)}.entry-panel h2{font-size:19px}.entry-rule{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}.rule-pill{font-size:10px;border:1px solid #315a4d;background:rgba(69,212,131,.07);color:#bdebd0;border-radius:999px;padding:5px 8px}.price-chart-detail{margin-top:10px;border:1px solid #243854;border-radius:10px;background:#081321;overflow:hidden}.price-chart-detail summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:0;background:#0b1728}.chart-meta{font-size:11px;color:var(--muted);font-weight:500}.terminal-chart-wrap{padding:8px;background:#07111f;overflow:auto}.candle-chart{min-width:980px;background:#07111f;border-radius:8px}.terminal-bg{fill:#07111f}.terminal-grid{stroke:#1a2a40;stroke-width:1;opacity:.72}.terminal-axis,.terminal-label{fill:#93a6c0;font-size:10px}.terminal-label{fill:#c2cee0;font-weight:650}.panel-sep{stroke:#263a55}.candle-up{fill:#18a999;stroke:#18a999;stroke-width:1}.candle-down{fill:#ef4d61;stroke:#ef4d61;stroke-width:1}.vol-up{fill:#16796f;opacity:.75}.vol-down{fill:#a73d4b;opacity:.72}.ma20-line{fill:none;stroke:#45d483;stroke-width:1.6}.ma50-line{fill:none;stroke:#f2bf55;stroke-width:1.5}.bb-line{fill:none;stroke:#7186a5;stroke-width:1;stroke-dasharray:3 4;opacity:.65}.last-price-line{stroke:#20b8a8;stroke-width:1;stroke-dasharray:2 3;opacity:.65}.last-price-box{fill:#148f84}.last-price-text{fill:white;font-size:10px;font-weight:700}.entry-guide{stroke:#45d483;stroke-width:1.2;stroke-dasharray:4 4;opacity:.85}.entry-arrow{fill:#45d483}.entry-box{fill:#102d28;stroke:#45d483;stroke-width:1}.entry-title{fill:#9ef0bd;font-size:10px;font-weight:800;letter-spacing:.05em}.entry-sub{fill:#e7fff0;font-size:10px;font-weight:650}.macd-zero{stroke:#40516d;stroke-width:1}.macd-bar-pos{fill:#61d4c7;opacity:.9}.macd-bar-neg{fill:#f16978;opacity:.9}.macd-line{fill:none;stroke:#3da5ff;stroke-width:1.7}.signal-line{fill:none;stroke:#ff8a3d;stroke-width:1.7}.legend-ma20{fill:#45d483;font-size:10px}.legend-ma50{fill:#f2bf55;font-size:10px}.legend-bb{fill:#91a5c2;font-size:10px}
+    .entry-panel{margin-top:16px;border:1px solid #3b745f;background:linear-gradient(180deg,rgba(19,48,42,.62),rgba(11,26,36,.98));box-shadow:0 16px 42px rgba(0,0,0,.22)}.entry-panel h2{font-size:19px}.entry-rule{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}.rule-pill{font-size:10px;border:1px solid #315a4d;background:rgba(69,212,131,.07);color:#bdebd0;border-radius:999px;padding:5px 8px}.price-chart-detail{margin-top:10px;border:1px solid #243854;border-radius:10px;background:#081321;overflow:hidden}.price-chart-detail summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:0;background:#0b1728}.chart-meta{font-size:11px;color:var(--muted);font-weight:500}.terminal-chart-wrap{padding:8px;background:#07111f;overflow:auto}.candle-chart{min-width:980px;background:#07111f;border-radius:8px}.terminal-bg{fill:#07111f}.terminal-grid{stroke:#1a2a40;stroke-width:1;opacity:.72}.terminal-axis,.terminal-label{fill:#93a6c0;font-size:10px}.terminal-label{fill:#c2cee0;font-weight:650}.panel-sep{stroke:#263a55}.candle-up{fill:#18a999;stroke:#18a999;stroke-width:1}.candle-down{fill:#ef4d61;stroke:#ef4d61;stroke-width:1}.vol-up{fill:#16796f;opacity:.75}.vol-down{fill:#a73d4b;opacity:.72}.ma20-line{fill:none;stroke:#45d483;stroke-width:1.6}.ma50-line{fill:none;stroke:#f2bf55;stroke-width:1.5}.bb-line{fill:none;stroke:#7186a5;stroke-width:1;stroke-dasharray:3 4;opacity:.65}.last-price-line{stroke:#20b8a8;stroke-width:1;stroke-dasharray:2 3;opacity:.65}.last-price-box{fill:#148f84}.last-price-text{fill:white;font-size:10px;font-weight:700}.entry-guide{stroke:#45d483;stroke-width:1.2;stroke-dasharray:4 4;opacity:.85}.entry-arrow{fill:#45d483}.entry-box{fill:#102d28;stroke:#45d483;stroke-width:1}.entry-title{fill:#9ef0bd;font-size:10px;font-weight:800;letter-spacing:.05em}.entry-sub{fill:#e7fff0;font-size:10px;font-weight:650}.entry-price-line{stroke:#45d483;stroke-width:1.2;stroke-dasharray:6 4;opacity:.72}.entry-perf-pos{fill:#83e7aa;font-size:10px;font-weight:750}.entry-perf-neg{fill:#f1919e;font-size:10px;font-weight:750}.macd-zero{stroke:#40516d;stroke-width:1}.macd-bar-pos{fill:#61d4c7;opacity:.9}.macd-bar-neg{fill:#f16978;opacity:.9}.macd-line{fill:none;stroke:#3da5ff;stroke-width:1.7}.signal-line{fill:none;stroke:#ff8a3d;stroke-width:1.7}.legend-ma20{fill:#45d483;font-size:10px}.legend-ma50{fill:#f2bf55;font-size:10px}.legend-bb{fill:#91a5c2;font-size:10px}
     .opportunity-shell{border:1px solid #34506f;background:linear-gradient(180deg,rgba(16,37,57,.98),rgba(10,23,39,.98));box-shadow:0 0 0 1px rgba(84,215,239,.05),0 18px 44px rgba(0,0,0,.18)}.opportunity-shell.has-alert{border-color:#3f856c;box-shadow:0 0 0 1px rgba(69,212,131,.10),0 18px 44px rgba(0,0,0,.20)}.opportunity-title{display:flex;align-items:center;gap:9px}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#66778f}.has-alert .pulse-dot{background:var(--green);box-shadow:0 0 0 5px rgba(69,212,131,.10)}.count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;border-radius:999px;padding:0 7px;background:#142943;border:1px solid #2f4c70;color:#dcecff;font-size:11px;font-weight:750}.has-alert .count-badge{background:rgba(69,212,131,.10);border-color:#34745e;color:#8ff0b5}.opp-col{min-width:0}.opp-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px;font-weight:750}.opp-threshold{font-size:10px;color:var(--muted);font-weight:500}.portfolio-note{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 12px}.portfolio-pill{border:1px solid #2b405f;background:#0b1728;border-radius:9px;padding:8px 10px;font-size:11px;color:#aebdd2}.portfolio-pill b{display:block;color:#eef5ff;font-size:13px;margin-top:2px}
     details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:#aebdd2;font-size:12px}.method{font-size:12px;color:var(--muted);line-height:1.6}
     @media(max-width:1150px){.kpis{grid-template-columns:repeat(3,1fr)}.grid-2,.grid-even{grid-template-columns:1fr}.grid-3{grid-template-columns:1fr 1fr}}
