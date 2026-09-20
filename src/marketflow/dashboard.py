@@ -705,17 +705,30 @@ def render_dashboard(
         size=portfolio_size,
         sector_cap=portfolio_sector_cap,
     )
-    entry_candidates=build_entry_candidates(
-        latest,
-        top_n=int(opp_cfg.get('entry_top_n',3)),
+    score_history = scored_history if scored_history is not None else pd.DataFrame()
+    entry_kwargs = dict(
         min_sector_score=float(opp_cfg.get('entry_min_sector_score',50)),
+        min_leadership_score=float(opp_cfg.get('entry_min_leadership_score',65)),
+        min_short_score=float(opp_cfg.get('entry_min_short_score',65)),
+        min_long_score=float(opp_cfg.get('entry_min_long_score',55)),
+        short_cross_threshold=float(opp_cfg.get('entry_short_cross_threshold',80)),
         require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive',True)),
         require_ma_bull=bool(opp_cfg.get('entry_require_ma_bull',True)),
+        max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance',0.15)),
+        max_ret5=float(opp_cfg.get('entry_max_ret5',0.18)),
         ma_cross_bonus=float(opp_cfg.get('entry_ma_cross_bonus',4)),
         bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus',6)),
     )
+    entry_signal_history=build_entry_signal_history(score_history, **entry_kwargs)
+    entry_candidates=build_entry_candidates(
+        score_history,
+        top_n=int(opp_cfg.get('entry_top_n',3)),
+        max_age_sessions=int(opp_cfg.get('entry_max_age_sessions',3)),
+        max_distance_from_entry=float(opp_cfg.get('entry_max_distance_from_entry',0.08)),
+        **entry_kwargs,
+    )
     opportunity_count=len(short_entries)+len(long_entries)
-    entry_chart_html=_candidate_charts(price_history,entry_candidates,days=126)
+    entry_chart_html=_candidate_charts(price_history,entry_candidates,entry_signal_history,days=126)
 
     css = """
     :root{
@@ -769,9 +782,9 @@ def render_dashboard(
 
     <div class='panel entry-panel' id='entry-top3'>
       <div class='section-head'><div><div class='section-kicker'>Priority setup</div><h2>Top 3 ứng viên mở vị thế — Model</h2></div><span class='tag'>Strict technical gate</span></div>
-      <div class='entry-rule'><span class='rule-pill'>MACD &gt; 0 + Histogram &gt; 0</span><span class='rule-pill'>MA20 &gt; MA50</span><span class='rule-pill'>Ngành đủ mạnh</span><span class='rule-pill'>Bonus: MA cross gần đây</span><span class='rule-pill'>Bonus: breakout sau BB squeeze</span></div>
-      <div class='note' style='margin-bottom:10px'>Chỉ xếp hạng các mã qua đủ bộ lọc kỹ thuật bắt buộc. Breakout sau giai đoạn Bollinger Band siết là điểm cộng, không phải điều kiện bắt buộc. Nếu ít hơn 3 mã đạt chuẩn, bảng sẽ hiển thị ít hơn 3 thay vì nới điều kiện.</div>
-      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_score','sector_score','leadership_score','short_momentum_score','long_momentum_score','macd_status','ma_status','technical_setup','stage'],3)}</div>
+      <div class='entry-rule'><span class='rule-pill'>Fresh trigger</span><span class='rule-pill'>MACD &gt; 0 + Histogram &gt; 0</span><span class='rule-pill'>MA20 &gt; MA50</span><span class='rule-pill'>≤ 15% trên MA20</span><span class='rule-pill'>5 phiên ≤ +18%</span><span class='rule-pill'>≤ 3 phiên từ entry</span><span class='rule-pill'>≤ +8% từ entry</span></div>
+      <div class='note' style='margin-bottom:10px'>Đây là <b>fresh entry</b>, không phải bảng các mã mạnh nhất hiện tại. Model chỉ giữ setup còn mới, chưa chạy quá xa khỏi điểm trigger và chưa quá căng so với MA20/5 phiên. Nếu không đủ 3 mã thì để trống thay vì đuổi giá.</div>
+      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_date','entry_price','current_price','since_entry_pct','entry_age_sessions','entry_reason','entry_score_current','sector_score','leadership_score','short_momentum_score','long_momentum_score','stage'],3)}</div>
       <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>6-month technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>~126 phiên</span></div>
       {entry_chart_html}
     </div>
