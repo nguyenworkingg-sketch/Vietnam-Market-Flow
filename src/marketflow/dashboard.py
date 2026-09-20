@@ -41,6 +41,9 @@ DISPLAY = {
     'since_entry_pct': 'Từ entry %',
     'entry_age_sessions': 'Số phiên từ entry',
     'entry_reason': 'Trigger',
+    'leadership_med10': 'Leadership 10P',
+    'long_med10': 'SM dài hạn 10P',
+    'sector_med10': 'Sector 10P',
 }
 
 STAGE_VI = {
