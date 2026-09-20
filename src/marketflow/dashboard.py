@@ -432,16 +432,16 @@ def _stock_chart_explorer(
 
         const dateIndex=Object.fromEntries(rows.map((r,i)=>[r[0],i]));
         const events=(SIG[ticker]||[]).filter(e=>dateIndex[e[0]]!==undefined);
-        for(const e of events) {{
+        events.forEach((e,k)=>{{
           const idx=dateIndex[e[0]],x=sx(idx),y=sy(e[1]);
-          ctx.strokeStyle='#45d483';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x,y+5);ctx.lineTo(x,Math.min(PB-35,y+48));ctx.stroke();ctx.setLineDash([]);
-          ctx.fillStyle='#45d483';ctx.beginPath();ctx.moveTo(x,y+1);ctx.lineTo(x-6,y+10);ctx.lineTo(x+6,y+10);ctx.closePath();ctx.fill();
-          ctx.fillStyle='#102d28';ctx.strokeStyle='#45d483';ctx.lineWidth=1;
-          const bx=Math.min(cssW-R-176,Math.max(L+4,x-75)),by=Math.min(PB-34,Math.max(PT+8,y+18));
-          ctx.fillRect(bx,by,172,32);ctx.strokeRect(bx,by,172,32);
-          ctx.fillStyle='#9ef0bd';ctx.font='700 10px system-ui';ctx.fillText('ENTRY '+e[0].split('-').reverse().join('/'),bx+7,by+13);
-          ctx.fillStyle='#e7fff0';ctx.font='600 10px system-ui';ctx.fillText(fmt(e[1])+' · '+e[3],bx+7,by+26);
-        }}
+          const labelY=PT+14+(k%2)*13;
+          ctx.strokeStyle='rgba(69,212,131,.55)';ctx.setLineDash([3,5]);
+          ctx.beginPath();ctx.moveTo(x,PT+26);ctx.lineTo(x,y-6);ctx.stroke();ctx.setLineDash([]);
+          ctx.fillStyle='#45d483';ctx.beginPath();ctx.moveTo(x,y-1);ctx.lineTo(x-5,y-9);ctx.lineTo(x+5,y-9);ctx.closePath();ctx.fill();
+          ctx.fillStyle='#9ef0bd';ctx.font='700 9px system-ui';ctx.textAlign='center';
+          ctx.fillText('ENTRY '+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
+          ctx.textAlign='left';
+        }});
         if(events.length) {{
           const e=events[events.length-1],idx=dateIndex[e[0]],ep=e[1],y=sy(ep),last=rows[rows.length-1][4],perf=last/ep-1;
           ctx.strokeStyle='#45d483';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
