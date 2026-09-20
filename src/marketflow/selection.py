@@ -333,7 +333,26 @@ def build_entry_candidates(
         return pd.DataFrame()
 
     recent_events = events.sort_values(['ticker','entry_date']).groupby('ticker', as_index=False).tail(1)
-    merged = latest.merge(recent_events, on=['ticker','sector'], how='inner', suffixes=('_current','_entry'))
+    current_cols = [
+        'ticker','sector','close','sector_score','leadership_score','short_momentum_score',
+        'long_momentum_score','flow_score','trend_score','ma20_distance','ret_5',
+        'macd_positive','ma_bull','stage',
+    ]
+    current = latest[[col for col in current_cols if col in latest.columns]].copy().rename(columns={
+        'close':'current_price',
+        'sector_score':'sector_score_current',
+        'leadership_score':'leadership_score_current',
+        'short_momentum_score':'short_momentum_score_current',
+        'long_momentum_score':'long_momentum_score_current',
+        'flow_score':'flow_score_current',
+        'trend_score':'trend_score_current',
+        'ma20_distance':'ma20_distance_current',
+        'ret_5':'ret_5_current',
+        'macd_positive':'macd_positive_current',
+        'ma_bull':'ma_bull_current',
+        'stage':'stage_current',
+    })
+    merged = current.merge(recent_events, on=['ticker','sector'], how='inner')
     if merged.empty:
         return pd.DataFrame()
 
@@ -349,7 +368,7 @@ def build_entry_candidates(
         entry_i = pos.get(pd.Timestamp(row['entry_date']), last_i)
         ages.append(max(0, last_i-entry_i))
     merged['entry_age_sessions'] = ages
-    merged['current_price'] = pd.to_numeric(merged['close_current'], errors='coerce')
+    merged['current_price'] = pd.to_numeric(merged['current_price'], errors='coerce')
     merged['since_entry_pct'] = merged['current_price'] / pd.to_numeric(merged['entry_price'], errors='coerce') - 1
 
     current_ok = (
