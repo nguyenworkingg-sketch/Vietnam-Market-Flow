@@ -200,6 +200,10 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             ma_cross_bonus=float(opp_cfg.get('entry_ma_cross_bonus', 4)),
             bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus', 6)),
         )
+        if not entry_signal_history.empty:
+            entry_signal_history['model_version'] = str(
+                opp_cfg.get('entry_model_version', 'v2-causal')
+            )
         entry_candidates = build_entry_candidates(
             scored,
             top_n=int(opp_cfg.get('entry_top_n', 3)),
@@ -256,6 +260,8 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         if sb is not None:
             sb.sync_universe(universe, as_of_date=latest_date)
             sb.sync_scores(latest)
+            if not entry_signal_history.empty:
+                sb.sync_entry_signals(entry_signal_history)
             sec_latest = sector_daily[sector_daily['date'] == latest_date].copy()
             sb.sync_sector(sec_latest)
             if not regime.empty:
