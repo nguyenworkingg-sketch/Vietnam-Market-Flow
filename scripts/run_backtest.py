@@ -36,6 +36,10 @@ def main():
         suite[name].to_csv(out/f'{name}.csv', index=False)
 
     entry_path = ROOT/'outputs'/'entry_signal_history.csv'
+    entry_audit_path = ROOT/'outputs'/'entry_signal_audit.csv'
+    entry_audit = pd.DataFrame()
+    if entry_audit_path.exists():
+        entry_audit = pd.read_csv(entry_audit_path, parse_dates=['entry_date'])
     entry_summary = pd.DataFrame()
     if entry_path.exists():
         entries = pd.read_csv(entry_path, parse_dates=['entry_date'])
@@ -77,6 +81,7 @@ def main():
         backtest=bt_payload,
         opportunity_cfg=opp_cfg,
         price_history=panel,
+        historical_entry_events=entry_audit,
     )
     (ROOT/'docs').mkdir(exist_ok=True)
     render_dashboard(

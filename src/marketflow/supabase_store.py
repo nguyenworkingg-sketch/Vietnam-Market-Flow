@@ -224,6 +224,26 @@ class SupabaseRESTStore:
         rows = _records(x, rename={'date':'trade_date'})
         self._batch_post('mf_scores_daily', rows, on_conflict='trade_date,ticker')
 
+    def fetch_entry_signals(self, start_date=None) -> pd.DataFrame:
+        params = {
+            'select': 'signal_date,ticker,sector,entry_price,entry_score,entry_reason,model_version,created_at',
+            'order': 'signal_date.asc,ticker.asc',
+        }
+        if start_date is not None:
+            params['signal_date'] = f'gte.{pd.Timestamp(start_date).date().isoformat()}'
+        rows = self._get_rows('mf_entry_signals', params)
+        if not rows:
+            return pd.DataFrame(columns=[
+                'entry_date','ticker','sector','entry_price','entry_score',
+                'entry_reason','model_version','created_at',
+            ])
+        x = pd.DataFrame(rows).rename(columns={'signal_date':'entry_date'})
+        x['entry_date'] = pd.to_datetime(x['entry_date']).dt.normalize()
+        for col in ['entry_price','entry_score']:
+            if col in x.columns:
+                x[col] = pd.to_numeric(x[col], errors='coerce')
+        return x
+
     def sync_entry_signals(self, signals: pd.DataFrame) -> None:
         cols = [
             'entry_date','ticker','sector','entry_price','entry_score',

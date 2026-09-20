@@ -118,6 +118,16 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
             })
     price_history=pd.DataFrame(price_rows)
 
+    historical_entries = pd.DataFrame([{
+        'entry_date': pd.Timestamp('2026-02-11'),
+        'ticker': 'AAA',
+        'sector': 'Ngân hàng',
+        'entry_price': 25.0,
+        'entry_score': 80.0,
+        'entry_reason': 'Legacy test',
+        'model_version': 'v2-causal-2026-09-20',
+    }])
+
     out = tmp_path/'dashboard.html'
     render_dashboard(
         latest,
@@ -129,6 +139,7 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
         sector_history=sectors,
         backtest={'deciles':deciles,'ic_daily':ic,'summary':summary},
         price_history=price_history,
+        historical_entry_events=historical_entries,
     )
     text = out.read_text(encoding='utf-8')
     assert 'Xu hướng regime & độ rộng' in text
@@ -144,6 +155,9 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert 'MACD (12,26,9)' in text
     assert 'Biểu đồ kỹ thuật toàn bộ cổ phiếu' in text
     assert "id='stock-chart-select'" in text
+    assert "id='stock-chart-range'" in text
+    assert '12 tháng' in text
+    assert 'v2-causal-2026-09-20' in text
     assert 'Alpha theo decile' in text
     assert '<svg' in text
 

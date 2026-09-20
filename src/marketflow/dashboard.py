@@ -266,7 +266,7 @@ def _stock_chart_explorer(
     entry_events: pd.DataFrame | None,
     latest: pd.DataFrame,
     default_ticker: str | None = None,
-    days: int = 126,
+    days: int = 252,
 ) -> str:
     if price_history is None or price_history.empty:
         return "<div class='empty'>Chưa có dữ liệu giá cho Stock Chart Explorer.</div>"
@@ -321,6 +321,7 @@ def _stock_chart_explorer(
                     clean(r.get('entry_price')),
                     clean(r.get('entry_score')),
                     str(r.get('entry_reason','Entry')),
+                    str(r.get('model_version','')),
                 ]
                 for _,r in g.tail(6).iterrows()
             ]
@@ -351,6 +352,8 @@ def _stock_chart_explorer(
     <div class='stock-explorer-controls'>
       <label for='stock-chart-select'>Chọn cổ phiếu</label>
       <select id='stock-chart-select'>{options}</select>
+      <label for='stock-chart-range'>Range</label>
+      <select id='stock-chart-range'><option value='126' selected>6 tháng</option><option value='252'>12 tháng</option></select>
       <span id='stock-chart-summary' class='chart-meta'></span>
     </div>
     <div class='canvas-wrap'><canvas id='stock-chart-canvas' height='700'></canvas></div>
@@ -363,6 +366,7 @@ def _stock_chart_explorer(
       const SIG=JSON.parse(document.getElementById('stock-signal-data').textContent);
       const CUR=JSON.parse(document.getElementById('stock-current-data').textContent);
       const select=document.getElementById('stock-chart-select');
+      const rangeSelect=document.getElementById('stock-chart-range');
       const canvas=document.getElementById('stock-chart-canvas');
       const summary=document.getElementById('stock-chart-summary');
       const ctx=canvas.getContext('2d');
@@ -378,7 +382,9 @@ def _stock_chart_explorer(
       }}
       function fmt(v,d=1){{return Number.isFinite(v)?v.toFixed(d):'—';}}
       function draw(ticker) {{
-        const rows=DATA[ticker]||[]; if(!rows.length)return;
+        const allRows=DATA[ticker]||[]; if(!allRows.length)return;
+        const rangeN=parseInt(rangeSelect.value||'126',10);
+        const rows=allRows.slice(-rangeN);
         const dpr=window.devicePixelRatio||1;
         const cssW=Math.max(900,canvas.parentElement.clientWidth-2), cssH=700;
         canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
@@ -434,20 +440,24 @@ def _stock_chart_explorer(
         ctx.fillStyle='#91a5c2';ctx.fillText('Bollinger Bands',L+212,MT-28);
 
         const dateIndex=Object.fromEntries(rows.map((r,i)=>[r[0],i]));
-        const events=(SIG[ticker]||[]).filter(e=>dateIndex[e[0]]!==undefined);
+        const allEvents=SIG[ticker]||[];
+        const events=allEvents.filter(e=>dateIndex[e[0]]!==undefined);
         events.forEach((e,k)=>{{
           const idx=dateIndex[e[0]],x=sx(idx),y=sy(e[1]);
+          const currentModel=(e[4]||'').startsWith('v3-');
+          const marker=currentModel?'#45d483':'#f2bf55';
           const labelY=PT+14+(k%2)*13;
-          ctx.strokeStyle='rgba(69,212,131,.55)';ctx.setLineDash([3,5]);
+          ctx.strokeStyle=currentModel?'rgba(69,212,131,.55)':'rgba(242,191,85,.48)';ctx.setLineDash([3,5]);
           ctx.beginPath();ctx.moveTo(x,PT+26);ctx.lineTo(x,y-6);ctx.stroke();ctx.setLineDash([]);
-          ctx.fillStyle='#45d483';ctx.beginPath();ctx.moveTo(x,y-1);ctx.lineTo(x-5,y-9);ctx.lineTo(x+5,y-9);ctx.closePath();ctx.fill();
-          ctx.fillStyle='#9ef0bd';ctx.font='700 9px system-ui';ctx.textAlign='center';
-          ctx.fillText('ENTRY '+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
+          ctx.fillStyle=marker;ctx.beginPath();ctx.moveTo(x,y-1);ctx.lineTo(x-5,y-9);ctx.lineTo(x+5,y-9);ctx.closePath();ctx.fill();
+          ctx.fillStyle=currentModel?'#9ef0bd':'#f6d991';ctx.font='700 9px system-ui';ctx.textAlign='center';
+          ctx.fillText((currentModel?'ENTRY V3 ':'LEGACY ')+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
           ctx.textAlign='left';
         }});
         if(events.length) {{
           const e=events[events.length-1],idx=dateIndex[e[0]],ep=e[1],y=sy(ep),last=rows[rows.length-1][4],perf=last/ep-1;
-          ctx.strokeStyle='#45d483';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
+          const currentModel=(e[4]||'').startsWith('v3-');
+          ctx.strokeStyle=currentModel?'#45d483':'#f2bf55';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
           ctx.fillStyle=perf>=0?'#83e7aa':'#f1919e';ctx.font='700 11px system-ui';ctx.fillText('Từ entry '+(perf*100>=0?'+':'')+(perf*100).toFixed(1)+'%',Math.max(L,sx(rows.length-1)-105),y-7);
         }}
 
@@ -456,13 +466,22 @@ def _stock_chart_explorer(
         for(const f of ticks){{const i=Math.min(rows.length-1,Math.round(f*(rows.length-1)));ctx.fillText(rows[i][0].slice(5,7)+'/'+rows[i][0].slice(0,4),sx(i)-16,690);}}
         const meta=CUR[ticker]||{{}};
         const ev=events.length?events[events.length-1]:null;
+        const lastAll=allEvents.length?allEvents[allEvents.length-1]:null;
         const last=rows[rows.length-1][4];
         let s=(meta.sector||'')+' · Leadership '+fmt(meta.leadership)+' · SM NH '+fmt(meta.short)+' · SM DH '+fmt(meta.long);
-        if(ev) s+=' · Entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
-        else s+=' · Chưa có entry signal trong 6 tháng';
+        if(ev) {{
+          const tag=(ev[4]||'').startsWith('v3-')?'V3':'Legacy';
+          s+=' · '+tag+' entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
+        }} else if(lastAll) {{
+          const tag=(lastAll[4]||'').startsWith('v3-')?'V3':'Legacy V2';
+          s+=' · Không có entry trong '+(rangeN===126?'6M':'12M')+' · gần nhất '+tag+' '+lastAll[0]+' @ '+fmt(lastAll[1]);
+        }} else {{
+          s+=' · Chưa từng có entry signal được lưu';
+        }}
         summary.textContent=s;
       }}
       select.addEventListener('change',()=>draw(select.value));
+      rangeSelect.addEventListener('change',()=>draw(select.value));
       new ResizeObserver(()=>draw(select.value)).observe(canvas.parentElement);
       draw(select.value);
     }})();
@@ -873,6 +892,7 @@ def render_dashboard(
     backtest: dict[str, pd.DataFrame] | None = None,
     opportunity_cfg: dict | None = None,
     price_history: pd.DataFrame | None = None,
+    historical_entry_events: pd.DataFrame | None = None,
 ):
     latest=latest.copy()
     leaders = latest.sort_values('leadership_score', ascending=False)
@@ -946,9 +966,14 @@ def render_dashboard(
         str(entry_candidates.iloc[0]['ticker']) if not entry_candidates.empty
         else (str(leaders.iloc[0]['ticker']) if not leaders.empty else None)
     )
+    explorer_events = (
+        historical_entry_events
+        if historical_entry_events is not None
+        else entry_signal_history
+    )
     stock_explorer_html=_stock_chart_explorer(
-        price_history, entry_signal_history, latest,
-        default_ticker=default_chart_ticker, days=126,
+        price_history, explorer_events, latest,
+        default_ticker=default_chart_ticker, days=252,
     )
 
     css = """
@@ -1012,8 +1037,8 @@ def render_dashboard(
     </div>
 
     <div class='panel section' id='chart-explorer'>
-      <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6 tháng · Entry history</span></div>
-      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và các điểm entry mà model đã phát ra trong lịch sử 6 tháng. Đường entry gần nhất được kéo sang hiện tại để thấy cổ phiếu đã đi xa bao nhiêu.</div>
+      <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6M / 12M · Versioned history</span></div>
+      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V3 hiện tại hiển thị màu xanh; tín hiệu từ phương pháp V2 cũ được giữ lại dưới dạng Legacy màu vàng để audit, không được xem là tín hiệu hiện hành.</div>
       {stock_explorer_html}
     </div>
 
