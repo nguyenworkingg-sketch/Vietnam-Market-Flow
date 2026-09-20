@@ -30,7 +30,8 @@ DISPLAY = {
     'portfolio_score': 'Điểm Port',
     'weight': 'Tỷ trọng %',
     'entry_rank': 'Hạng',
-    'entry_score': 'Điểm mở vị thế',
+    'entry_score': 'Điểm entry',
+    'entry_score_current': 'Điểm entry hiện tại',
     'macd_status': 'MACD',
     'ma_status': 'MA cross',
     'technical_setup': 'Technical setup',
@@ -66,7 +67,12 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
     if d.empty:
         return "<div class='empty'>Chưa có dữ liệu phù hợp.</div>"
     for c in d.select_dtypes(include='number').columns:
-        d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
+        if c == 'since_entry_pct':
+            d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{100*v:+.1f}%')
+        else:
+            d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
+    for c in [col for col in d.columns if 'date' in str(col).lower()]:
+        d[c] = pd.to_datetime(d[c], errors='coerce').map(lambda v: '' if pd.isna(v) else v.strftime('%d/%m/%Y'))
     if 'stage' in d.columns:
         d['stage'] = d['stage'].map(lambda x: STAGE_VI.get(str(x), str(x)))
     d = d.rename(columns={k: v for k, v in DISPLAY.items() if k in d.columns})
