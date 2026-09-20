@@ -178,6 +178,48 @@ def research_summary(
     return pd.DataFrame(rows)
 
 
+
+def entry_signal_study(
+    prepared: pd.DataFrame,
+    entries: pd.DataFrame,
+    horizons: Iterable[int] = (5, 20, 60),
+) -> pd.DataFrame:
+    """Evaluate causal entry events against forward absolute/relative returns."""
+    if entries is None or entries.empty:
+        return pd.DataFrame(columns=['scope','horizon','metric','mean','median','hit_rate','count'])
+
+    e = entries.copy()
+    e['date'] = pd.to_datetime(e['entry_date']).dt.normalize()
+    cols = ['date','ticker','entry_reason']
+    e = e[cols].drop_duplicates(['date','ticker'])
+    metrics = []
+    for h in horizons:
+        metrics.extend([
+            (h,'absolute',f'fwd_{h}'),
+            (h,'market_alpha',f'alpha_market_{h}'),
+            (h,'sector_alpha',f'alpha_sector_{h}'),
+        ])
+    needed = ['date','ticker'] + sorted({m[2] for m in metrics})
+    x = e.merge(prepared[[c for c in needed if c in prepared.columns]], on=['date','ticker'], how='left')
+
+    rows=[]
+    for scope,g0 in [('ALL',x)] + [(str(reason),g) for reason,g in x.groupby('entry_reason')]:
+        for h,label,col in metrics:
+            if col not in g0.columns:
+                continue
+            g = g0.dropna(subset=[col])
+            rows.append({
+                'scope': scope,
+                'horizon': h,
+                'metric': label,
+                'mean': g[col].mean() if len(g) else np.nan,
+                'median': g[col].median() if len(g) else np.nan,
+                'hit_rate': (g[col] > 0).mean() if len(g) else np.nan,
+                'count': len(g),
+            })
+    return pd.DataFrame(rows)
+
+
 def run_research_suite(panel: pd.DataFrame, horizons: Iterable[int] = (5, 20, 60)) -> dict[str, pd.DataFrame]:
     prepared = add_forward_returns(panel, horizons=horizons)
     deciles = decile_study(prepared, horizons=horizons)
