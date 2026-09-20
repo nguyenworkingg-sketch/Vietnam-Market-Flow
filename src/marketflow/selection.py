@@ -198,7 +198,7 @@ def build_entry_signal_history(
 
     needed = [
         'close','leadership_score','sector_score','short_momentum_score','long_momentum_score',
-        'flow_score','trend_score','ret_5','ma20_distance','macd','macd_hist','macd_positive',
+        'flow_score','trend_score','ret_5','ma20','ma20_distance','macd','macd_hist','macd_positive',
         'ma_bull','ma_cross_up','bb_breakout_after_squeeze',
     ]
     for col in needed:
@@ -211,10 +211,8 @@ def build_entry_signal_history(
 
     short_cross = (
         pd.to_numeric(x['short_momentum_score'], errors='coerce').ge(float(short_cross_threshold))
-        & (
-            pd.to_numeric(x['prev_short_momentum_score'], errors='coerce').lt(float(short_cross_threshold))
-            | x['prev_short_momentum_score'].isna()
-        )
+        & x['prev_short_momentum_score'].notna()
+        & pd.to_numeric(x['prev_short_momentum_score'], errors='coerce').lt(float(short_cross_threshold))
     )
     macd_turn = (
         pd.to_numeric(x['macd_hist'], errors='coerce').gt(0)
