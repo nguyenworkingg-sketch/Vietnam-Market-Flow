@@ -224,6 +224,21 @@ class SupabaseRESTStore:
         rows = _records(x, rename={'date':'trade_date'})
         self._batch_post('mf_scores_daily', rows, on_conflict='trade_date,ticker')
 
+    def sync_entry_signals(self, signals: pd.DataFrame) -> None:
+        cols = [
+            'entry_date','ticker','sector','entry_price','entry_score',
+            'entry_reason','model_version',
+        ]
+        x = signals[[c for c in cols if c in signals.columns]].copy()
+        if x.empty:
+            return
+        rows = _records(x, rename={'entry_date':'signal_date'})
+        self._batch_post(
+            'mf_entry_signals',
+            rows,
+            on_conflict='signal_date,ticker,model_version',
+        )
+
     def sync_sector(self, sector_daily: pd.DataFrame) -> None:
         cols = ['date','sector','sector_score','acceleration','breadth_ma20','breadth_ma50']
         x = sector_daily[[c for c in cols if c in sector_daily.columns]].copy()
