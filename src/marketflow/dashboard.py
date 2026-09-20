@@ -382,7 +382,9 @@ def _stock_chart_explorer(
       }}
       function fmt(v,d=1){{return Number.isFinite(v)?v.toFixed(d):'—';}}
       function draw(ticker) {{
-        const rows=DATA[ticker]||[]; if(!rows.length)return;
+        const allRows=DATA[ticker]||[]; if(!allRows.length)return;
+        const rangeN=parseInt(rangeSelect.value||'126',10);
+        const rows=allRows.slice(-rangeN);
         const dpr=window.devicePixelRatio||1;
         const cssW=Math.max(900,canvas.parentElement.clientWidth-2), cssH=700;
         canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
@@ -438,11 +440,14 @@ def _stock_chart_explorer(
         ctx.fillStyle='#91a5c2';ctx.fillText('Bollinger Bands',L+212,MT-28);
 
         const dateIndex=Object.fromEntries(rows.map((r,i)=>[r[0],i]));
-        const events=(SIG[ticker]||[]).filter(e=>dateIndex[e[0]]!==undefined);
+        const allEvents=SIG[ticker]||[];
+        const events=allEvents.filter(e=>dateIndex[e[0]]!==undefined);
         events.forEach((e,k)=>{{
           const idx=dateIndex[e[0]],x=sx(idx),y=sy(e[1]);
+          const currentModel=(e[4]||'').startsWith('v3-');
+          const marker=currentModel?'#45d483':'#f2bf55';
           const labelY=PT+14+(k%2)*13;
-          ctx.strokeStyle='rgba(69,212,131,.55)';ctx.setLineDash([3,5]);
+          ctx.strokeStyle=currentModel?'rgba(69,212,131,.55)':'rgba(242,191,85,.48)';ctx.setLineDash([3,5]);
           ctx.beginPath();ctx.moveTo(x,PT+26);ctx.lineTo(x,y-6);ctx.stroke();ctx.setLineDash([]);
           ctx.fillStyle=marker;ctx.beginPath();ctx.moveTo(x,y-1);ctx.lineTo(x-5,y-9);ctx.lineTo(x+5,y-9);ctx.closePath();ctx.fill();
           ctx.fillStyle=currentModel?'#9ef0bd':'#f6d991';ctx.font='700 9px system-ui';ctx.textAlign='center';
@@ -451,7 +456,8 @@ def _stock_chart_explorer(
         }});
         if(events.length) {{
           const e=events[events.length-1],idx=dateIndex[e[0]],ep=e[1],y=sy(ep),last=rows[rows.length-1][4],perf=last/ep-1;
-          ctx.strokeStyle='#45d483';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
+          const currentModel=(e[4]||'').startsWith('v3-');
+          ctx.strokeStyle=currentModel?'#45d483':'#f2bf55';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
           ctx.fillStyle=perf>=0?'#83e7aa':'#f1919e';ctx.font='700 11px system-ui';ctx.fillText('Từ entry '+(perf*100>=0?'+':'')+(perf*100).toFixed(1)+'%',Math.max(L,sx(rows.length-1)-105),y-7);
         }}
 
@@ -460,13 +466,22 @@ def _stock_chart_explorer(
         for(const f of ticks){{const i=Math.min(rows.length-1,Math.round(f*(rows.length-1)));ctx.fillText(rows[i][0].slice(5,7)+'/'+rows[i][0].slice(0,4),sx(i)-16,690);}}
         const meta=CUR[ticker]||{{}};
         const ev=events.length?events[events.length-1]:null;
+        const lastAll=allEvents.length?allEvents[allEvents.length-1]:null;
         const last=rows[rows.length-1][4];
         let s=(meta.sector||'')+' · Leadership '+fmt(meta.leadership)+' · SM NH '+fmt(meta.short)+' · SM DH '+fmt(meta.long);
-        if(ev) s+=' · Entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
-        else s+=' · Chưa có entry signal trong 6 tháng';
+        if(ev) {{
+          const tag=(ev[4]||'').startsWith('v3-')?'V3':'Legacy';
+          s+=' · '+tag+' entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
+        }} else if(lastAll) {{
+          const tag=(lastAll[4]||'').startsWith('v3-')?'V3':'Legacy V2';
+          s+=' · Không có entry trong '+(rangeN===126?'6M':'12M')+' · gần nhất '+tag+' '+lastAll[0]+' @ '+fmt(lastAll[1]);
+        }} else {{
+          s+=' · Chưa từng có entry signal được lưu';
+        }}
         summary.textContent=s;
       }}
       select.addEventListener('change',()=>draw(select.value));
+      rangeSelect.addEventListener('change',()=>draw(select.value));
       new ResizeObserver(()=>draw(select.value)).observe(canvas.parentElement);
       draw(select.value);
     }})();
