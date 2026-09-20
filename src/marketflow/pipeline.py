@@ -231,6 +231,34 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         entry_candidates.to_csv(out / 'top3_entry_candidates.csv', index=False)
         entry_signal_history.to_csv(out / 'entry_signal_history.csv', index=False)
 
+        # Explorer audit trail: keep historical signals from prior model
+        # versions, clearly versioned, instead of making them disappear when
+        # methodology changes. Current-model events remain separate for
+        # candidate selection/backtests.
+        entry_signal_audit = entry_signal_history.copy()
+        if sb is not None:
+            try:
+                persisted = sb.fetch_entry_signals(
+                    pd.Timestamp(latest_date) - pd.Timedelta(days=430)
+                )
+                if not persisted.empty:
+                    entry_signal_audit = pd.concat(
+                        [persisted, entry_signal_history], ignore_index=True
+                    )
+            except Exception as exc:
+                print(f'[WARN] Could not fetch entry audit history: {exc}')
+        if not entry_signal_audit.empty:
+            entry_signal_audit['entry_date'] = pd.to_datetime(
+                entry_signal_audit['entry_date']
+            ).dt.normalize()
+            entry_signal_audit = (
+                entry_signal_audit
+                .drop_duplicates(['entry_date','ticker','model_version'], keep='last')
+                .sort_values(['ticker','entry_date'])
+                .reset_index(drop=True)
+            )
+        entry_signal_audit.to_csv(out / 'entry_signal_audit.csv', index=False)
+
         regime.to_csv(out / 'market_regime.csv', index=False)
         render_dashboard(
             latest,
@@ -241,6 +269,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             sector_history=sector_daily,
             opportunity_cfg=opp_cfg,
             price_history=feat,
+            historical_entry_events=entry_signal_audit,
         )
         docs = root / 'docs'
         docs.mkdir(exist_ok=True)
