@@ -266,7 +266,7 @@ def _stock_chart_explorer(
     entry_events: pd.DataFrame | None,
     latest: pd.DataFrame,
     default_ticker: str | None = None,
-    days: int = 126,
+    days: int = 252,
 ) -> str:
     if price_history is None or price_history.empty:
         return "<div class='empty'>Chưa có dữ liệu giá cho Stock Chart Explorer.</div>"
@@ -321,6 +321,7 @@ def _stock_chart_explorer(
                     clean(r.get('entry_price')),
                     clean(r.get('entry_score')),
                     str(r.get('entry_reason','Entry')),
+                    str(r.get('model_version','')),
                 ]
                 for _,r in g.tail(6).iterrows()
             ]
@@ -351,6 +352,8 @@ def _stock_chart_explorer(
     <div class='stock-explorer-controls'>
       <label for='stock-chart-select'>Chọn cổ phiếu</label>
       <select id='stock-chart-select'>{options}</select>
+      <label for='stock-chart-range'>Range</label>
+      <select id='stock-chart-range'><option value='126' selected>6 tháng</option><option value='252'>12 tháng</option></select>
       <span id='stock-chart-summary' class='chart-meta'></span>
     </div>
     <div class='canvas-wrap'><canvas id='stock-chart-canvas' height='700'></canvas></div>
@@ -363,6 +366,7 @@ def _stock_chart_explorer(
       const SIG=JSON.parse(document.getElementById('stock-signal-data').textContent);
       const CUR=JSON.parse(document.getElementById('stock-current-data').textContent);
       const select=document.getElementById('stock-chart-select');
+      const rangeSelect=document.getElementById('stock-chart-range');
       const canvas=document.getElementById('stock-chart-canvas');
       const summary=document.getElementById('stock-chart-summary');
       const ctx=canvas.getContext('2d');
@@ -440,9 +444,9 @@ def _stock_chart_explorer(
           const labelY=PT+14+(k%2)*13;
           ctx.strokeStyle='rgba(69,212,131,.55)';ctx.setLineDash([3,5]);
           ctx.beginPath();ctx.moveTo(x,PT+26);ctx.lineTo(x,y-6);ctx.stroke();ctx.setLineDash([]);
-          ctx.fillStyle='#45d483';ctx.beginPath();ctx.moveTo(x,y-1);ctx.lineTo(x-5,y-9);ctx.lineTo(x+5,y-9);ctx.closePath();ctx.fill();
-          ctx.fillStyle='#9ef0bd';ctx.font='700 9px system-ui';ctx.textAlign='center';
-          ctx.fillText('ENTRY '+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
+          ctx.fillStyle=marker;ctx.beginPath();ctx.moveTo(x,y-1);ctx.lineTo(x-5,y-9);ctx.lineTo(x+5,y-9);ctx.closePath();ctx.fill();
+          ctx.fillStyle=currentModel?'#9ef0bd':'#f6d991';ctx.font='700 9px system-ui';ctx.textAlign='center';
+          ctx.fillText((currentModel?'ENTRY V3 ':'LEGACY ')+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
           ctx.textAlign='left';
         }});
         if(events.length) {{
@@ -873,6 +877,7 @@ def render_dashboard(
     backtest: dict[str, pd.DataFrame] | None = None,
     opportunity_cfg: dict | None = None,
     price_history: pd.DataFrame | None = None,
+    historical_entry_events: pd.DataFrame | None = None,
 ):
     latest=latest.copy()
     leaders = latest.sort_values('leadership_score', ascending=False)
@@ -946,9 +951,14 @@ def render_dashboard(
         str(entry_candidates.iloc[0]['ticker']) if not entry_candidates.empty
         else (str(leaders.iloc[0]['ticker']) if not leaders.empty else None)
     )
+    explorer_events = (
+        historical_entry_events
+        if historical_entry_events is not None
+        else entry_signal_history
+    )
     stock_explorer_html=_stock_chart_explorer(
-        price_history, entry_signal_history, latest,
-        default_ticker=default_chart_ticker, days=126,
+        price_history, explorer_events, latest,
+        default_ticker=default_chart_ticker, days=252,
     )
 
     css = """
@@ -1012,8 +1022,8 @@ def render_dashboard(
     </div>
 
     <div class='panel section' id='chart-explorer'>
-      <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6 tháng · Entry history</span></div>
-      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và các điểm entry mà model đã phát ra trong lịch sử 6 tháng. Đường entry gần nhất được kéo sang hiện tại để thấy cổ phiếu đã đi xa bao nhiêu.</div>
+      <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6M / 12M · Versioned history</span></div>
+      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V3 hiện tại hiển thị màu xanh; tín hiệu từ phương pháp V2 cũ được giữ lại dưới dạng Legacy màu vàng để audit, không được xem là tín hiệu hiện hành.</div>
       {stock_explorer_html}
     </div>
 
