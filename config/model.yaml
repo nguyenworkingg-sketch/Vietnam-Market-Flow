@@ -67,6 +67,7 @@ opportunities:
   min_sector_score: 50
   portfolio_size: 10
   portfolio_sector_cap: 2
+  entry_model_version: v2-causal-2026-09-20
   entry_top_n: 3
   entry_min_sector_score: 50
   entry_min_leadership_score: 65
