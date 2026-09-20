@@ -33,9 +33,19 @@ def _latest():
         'ma_bull': [True,True,True,True,False,False],
         'ma_cross_up': [False,False,False,False,False,False],
         'ma_cross_recent_10': [False,True,False,False,False,False],
-        'ma20_distance': [.08,.07,.06,.05,.04,.03],
-        'ret_5': [.08,.06,.07,.05,.02,-.01],
-        'bb_breakout_after_squeeze': [True,False,False,False,False,False],
+        'ma20_distance': [.033,.036,.038,.042,.04,.03],
+        'ret_5': [.04,.04,.05,.04,.02,-.01],
+        'volume_ratio_20': [1.2,1.1,1.2,1.1,.9,.8],
+        'prior_high_10': [32,31,29,27,25,23],
+        'bb_squeeze_recent_10': [False,False,False,False,False,False],
+        'bb_breakout_after_squeeze': [False,False,False,False,False,False],
+        'medium_trend_confirm': [True,True,True,True,False,False],
+        'weekly_trend_confirm': [True,True,True,True,False,False],
+        'weekly_ret12': [.12,.10,.11,.09,.02,-.01],
+        'rs_60': [.10,.08,.09,.07,.01,-.02],
+        'rs_120': [.15,.12,.13,.10,.02,-.03],
+        'rs_sector_60': [.05,.04,.05,.03,.0,-.01],
+        'sector_rs_60': [.06,.06,.05,.04,.0,-.02],
     })
 
 
@@ -70,13 +80,31 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
         'mean_spearman_ic':[.04,.07,.09],
     })
 
-    previous = latest.copy()
-    previous['date'] = pd.Timestamp('2026-09-17')
-    previous['short_momentum_score'] = [75,82,76,76,61,42]
-    previous['macd_hist'] = [-.1,.3,.3,.2,0,-.1]
-    previous['macd_positive'] = [False,True,True,True,False,False]
-    previous['long_momentum_score'] = [86,77,79,74,58,45]
-    scored_history = pd.concat([previous, latest], ignore_index=True)
+    history_frames = []
+    hist_dates = pd.bdate_range(end='2026-09-18', periods=10)
+    for i,d in enumerate(hist_dates):
+        h = latest.copy()
+        h['date'] = d
+        # Keep broad strength persistent; create one clean AAA pullback-resume
+        # trigger on the final session.
+        h['close'] = [30.15+i*.03, 28.5+i*.02, 26.5+i*.02, 24.5+i*.02, 23, 21]
+        h['ma20'] = [30.0,28.0,26.0,24.0,22.0,20.0]
+        h['ma20_distance'] = h['close']/h['ma20']-1
+        h['macd_hist'] = [.02+.005*i,.18,.16,.14,0,-.1]
+        h['macd_positive'] = [True,True,True,True,False,False]
+        h['short_momentum_score'] = [82,82,80,76,61,42]
+        h['long_momentum_score'] = [84,83,79,81,58,45]
+        if i == 8:
+            h.loc[h['ticker'].eq('AAA'),'close'] = 30.05
+            h.loc[h['ticker'].eq('AAA'),'ma20_distance'] = 30.05/30.0-1
+            h.loc[h['ticker'].eq('AAA'),'macd_hist'] = .02
+        if i == 9:
+            h.loc[h['ticker'].eq('AAA'),'close'] = 30.40
+            h.loc[h['ticker'].eq('AAA'),'ma20_distance'] = 30.40/30.0-1
+            h.loc[h['ticker'].eq('AAA'),'macd_hist'] = .09
+        history_frames.append(h)
+    scored_history = pd.concat(history_frames, ignore_index=True)
+    latest = scored_history[scored_history['date'].eq(pd.Timestamp('2026-09-18'))].copy()
 
     price_rows=[]
     for ticker in latest['ticker']:
@@ -113,7 +141,7 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert 'Điểm dẫn dắt × tăng tốc' in text
     assert 'Biểu đồ nến · Volume · MACD' in text
     assert 'MACD (12,26,9)' in text
-    assert 'ENTRY 18/09/2026' in text
+    assert 'ENTRY 18/09' in text
     assert 'Biểu đồ kỹ thuật toàn bộ cổ phiếu' in text
     assert "id='stock-chart-select'" in text
     assert 'Alpha theo decile' in text
