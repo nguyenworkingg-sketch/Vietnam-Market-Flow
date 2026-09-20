@@ -192,16 +192,11 @@ def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 
                 ex = sx(idx)
                 ep = float(erow['entry_price'])
                 ey = sy_price(ep)
-                label_y = min(price_bottom-50, max(price_top+10, ey+18+22*(k%2)))
-                label_x = min(width-right-174, max(left+4, ex-76))
-                reason = html.escape(str(erow.get('entry_reason','Entry')))
-                score = erow.get('entry_score', np.nan)
-                score_txt = '' if pd.isna(score) else f" · {float(score):.1f}"
-                chunks.append(f"<line x1='{ex:.1f}' y1='{ey+5:.1f}' x2='{ex:.1f}' y2='{label_y:.1f}' class='entry-guide'/>")
-                chunks.append(f"<polygon points='{ex-6:.1f},{ey+10:.1f} {ex+6:.1f},{ey+10:.1f} {ex:.1f},{ey+1:.1f}' class='entry-arrow'/>")
-                chunks.append(f"<rect x='{label_x:.1f}' y='{label_y:.1f}' width='170' height='34' rx='6' class='entry-box'/>")
-                chunks.append(f"<text x='{label_x+8:.1f}' y='{label_y+14:.1f}' class='entry-title'>ENTRY {pd.Timestamp(erow['entry_date']).strftime('%d/%m/%Y')}</text>")
-                chunks.append(f"<text x='{label_x+8:.1f}' y='{label_y+27:.1f}' class='entry-sub'>{ep:,.1f}{score_txt} · {reason}</text>")
+                tag_y = price_top + 13 + (k % 2) * 14
+                date_txt = pd.Timestamp(erow['entry_date']).strftime('%d/%m')
+                chunks.append(f"<line x1='{ex:.1f}' y1='{price_top+28:.1f}' x2='{ex:.1f}' y2='{ey-5:.1f}' class='entry-guide-top'/>")
+                chunks.append(f"<polygon points='{ex-5:.1f},{ey-8:.1f} {ex+5:.1f},{ey-8:.1f} {ex:.1f},{ey-1:.1f}' class='entry-arrow'/>")
+                chunks.append(f"<text x='{ex:.1f}' y='{tag_y:.1f}' text-anchor='middle' class='entry-top-label'>ENTRY {date_txt}</text>")
 
             # Compare current price with the most recent model entry.
             last_ev = visible.iloc[-1] if not visible.empty else None
@@ -922,24 +917,24 @@ def render_dashboard(
     )
     score_history = scored_history if scored_history is not None else pd.DataFrame()
     entry_kwargs = dict(
-        min_sector_score=float(opp_cfg.get('entry_min_sector_score',50)),
-        min_leadership_score=float(opp_cfg.get('entry_min_leadership_score',65)),
+        min_sector_score=float(opp_cfg.get('entry_min_sector_score',55)),
+        min_leadership_score=float(opp_cfg.get('entry_min_leadership_score',70)),
         min_short_score=float(opp_cfg.get('entry_min_short_score',65)),
-        min_long_score=float(opp_cfg.get('entry_min_long_score',55)),
-        short_cross_threshold=float(opp_cfg.get('entry_short_cross_threshold',80)),
+        min_long_score=float(opp_cfg.get('entry_min_long_score',70)),
         require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive',True)),
-        require_ma_bull=bool(opp_cfg.get('entry_require_ma_bull',True)),
-        max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance',0.15)),
-        max_ret5=float(opp_cfg.get('entry_max_ret5',0.18)),
-        ma_cross_bonus=float(opp_cfg.get('entry_ma_cross_bonus',4)),
-        bb_breakout_bonus=float(opp_cfg.get('entry_bb_breakout_bonus',6)),
+        require_medium_trend=bool(opp_cfg.get('entry_require_medium_trend',True)),
+        require_weekly_trend=bool(opp_cfg.get('entry_require_weekly_trend',True)),
+        max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance',0.08)),
+        max_ret5=float(opp_cfg.get('entry_max_ret5',0.10)),
+        squeeze_bonus=float(opp_cfg.get('entry_squeeze_bonus',5)),
+        pullback_bonus=float(opp_cfg.get('entry_pullback_bonus',3)),
     )
     entry_signal_history=build_entry_signal_history(score_history, **entry_kwargs)
     entry_candidates=build_entry_candidates(
         score_history,
         top_n=int(opp_cfg.get('entry_top_n',3)),
-        max_age_sessions=int(opp_cfg.get('entry_max_age_sessions',3)),
-        max_distance_from_entry=float(opp_cfg.get('entry_max_distance_from_entry',0.08)),
+        max_age_sessions=int(opp_cfg.get('entry_max_age_sessions',2)),
+        max_distance_from_entry=float(opp_cfg.get('entry_max_distance_from_entry',0.05)),
         **entry_kwargs,
     )
     opportunity_count=len(short_entries)+len(long_entries)
@@ -978,7 +973,7 @@ def render_dashboard(
     .mini-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mini-card{padding:13px}.mini-title{font-size:13px;font-weight:750;margin-bottom:9px}.mini-grid{display:grid;grid-template-columns:1fr auto;gap:5px 10px;font-size:11px;color:var(--muted)}.mini-grid b{color:#e5eefc;font-variant-numeric:tabular-nums}
     .readout{margin:0;padding-left:18px;color:#c8d5e8;font-size:13px;line-height:1.65}.readout b{color:white}.disclaimer{margin-top:20px;padding:14px 16px;border:1px solid #2d3d58;background:#0a1423;border-radius:11px;font-size:11px;color:#8da0bc;line-height:1.55}
     .stock-explorer-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.stock-explorer-controls label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.stock-explorer-controls select{min-width:260px;max-width:520px;background:#0a1525;color:#e9f2ff;border:1px solid #2a405f;border-radius:8px;padding:8px 10px;font:inherit}.canvas-wrap{width:100%;overflow:auto;background:#07111f;border:1px solid #20314c;border-radius:10px;padding:6px}.canvas-wrap canvas{display:block;min-width:900px}
-    .entry-panel{margin-top:16px;border:1px solid #3b745f;background:linear-gradient(180deg,rgba(19,48,42,.62),rgba(11,26,36,.98));box-shadow:0 16px 42px rgba(0,0,0,.22)}.entry-panel h2{font-size:19px}.entry-rule{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}.rule-pill{font-size:10px;border:1px solid #315a4d;background:rgba(69,212,131,.07);color:#bdebd0;border-radius:999px;padding:5px 8px}.price-chart-detail{margin-top:10px;border:1px solid #243854;border-radius:10px;background:#081321;overflow:hidden}.price-chart-detail summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:0;background:#0b1728}.chart-meta{font-size:11px;color:var(--muted);font-weight:500}.terminal-chart-wrap{padding:8px;background:#07111f;overflow:auto}.candle-chart{min-width:980px;background:#07111f;border-radius:8px}.terminal-bg{fill:#07111f}.terminal-grid{stroke:#1a2a40;stroke-width:1;opacity:.72}.terminal-axis,.terminal-label{fill:#93a6c0;font-size:10px}.terminal-label{fill:#c2cee0;font-weight:650}.panel-sep{stroke:#263a55}.candle-up{fill:#18a999;stroke:#18a999;stroke-width:1}.candle-down{fill:#ef4d61;stroke:#ef4d61;stroke-width:1}.vol-up{fill:#16796f;opacity:.75}.vol-down{fill:#a73d4b;opacity:.72}.ma20-line{fill:none;stroke:#45d483;stroke-width:1.6}.ma50-line{fill:none;stroke:#f2bf55;stroke-width:1.5}.bb-line{fill:none;stroke:#7186a5;stroke-width:1;stroke-dasharray:3 4;opacity:.65}.last-price-line{stroke:#20b8a8;stroke-width:1;stroke-dasharray:2 3;opacity:.65}.last-price-box{fill:#148f84}.last-price-text{fill:white;font-size:10px;font-weight:700}.entry-guide{stroke:#45d483;stroke-width:1.2;stroke-dasharray:4 4;opacity:.85}.entry-arrow{fill:#45d483}.entry-box{fill:#102d28;stroke:#45d483;stroke-width:1}.entry-title{fill:#9ef0bd;font-size:10px;font-weight:800;letter-spacing:.05em}.entry-sub{fill:#e7fff0;font-size:10px;font-weight:650}.entry-price-line{stroke:#45d483;stroke-width:1.2;stroke-dasharray:6 4;opacity:.72}.entry-perf-pos{fill:#83e7aa;font-size:10px;font-weight:750}.entry-perf-neg{fill:#f1919e;font-size:10px;font-weight:750}.macd-zero{stroke:#40516d;stroke-width:1}.macd-bar-pos{fill:#61d4c7;opacity:.9}.macd-bar-neg{fill:#f16978;opacity:.9}.macd-line{fill:none;stroke:#3da5ff;stroke-width:1.7}.signal-line{fill:none;stroke:#ff8a3d;stroke-width:1.7}.legend-ma20{fill:#45d483;font-size:10px}.legend-ma50{fill:#f2bf55;font-size:10px}.legend-bb{fill:#91a5c2;font-size:10px}
+    .entry-panel{margin-top:16px;border:1px solid #3b745f;background:linear-gradient(180deg,rgba(19,48,42,.62),rgba(11,26,36,.98));box-shadow:0 16px 42px rgba(0,0,0,.22)}.entry-panel h2{font-size:19px}.entry-rule{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}.rule-pill{font-size:10px;border:1px solid #315a4d;background:rgba(69,212,131,.07);color:#bdebd0;border-radius:999px;padding:5px 8px}.price-chart-detail{margin-top:10px;border:1px solid #243854;border-radius:10px;background:#081321;overflow:hidden}.price-chart-detail summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:0;background:#0b1728}.chart-meta{font-size:11px;color:var(--muted);font-weight:500}.terminal-chart-wrap{padding:8px;background:#07111f;overflow:auto}.candle-chart{min-width:980px;background:#07111f;border-radius:8px}.terminal-bg{fill:#07111f}.terminal-grid{stroke:#1a2a40;stroke-width:1;opacity:.72}.terminal-axis,.terminal-label{fill:#93a6c0;font-size:10px}.terminal-label{fill:#c2cee0;font-weight:650}.panel-sep{stroke:#263a55}.candle-up{fill:#18a999;stroke:#18a999;stroke-width:1}.candle-down{fill:#ef4d61;stroke:#ef4d61;stroke-width:1}.vol-up{fill:#16796f;opacity:.75}.vol-down{fill:#a73d4b;opacity:.72}.ma20-line{fill:none;stroke:#45d483;stroke-width:1.6}.ma50-line{fill:none;stroke:#f2bf55;stroke-width:1.5}.bb-line{fill:none;stroke:#7186a5;stroke-width:1;stroke-dasharray:3 4;opacity:.65}.last-price-line{stroke:#20b8a8;stroke-width:1;stroke-dasharray:2 3;opacity:.65}.last-price-box{fill:#148f84}.last-price-text{fill:white;font-size:10px;font-weight:700}.entry-guide{stroke:#45d483;stroke-width:1.2;stroke-dasharray:4 4;opacity:.85}.entry-guide-top{stroke:#45d483;stroke-width:1;stroke-dasharray:3 5;opacity:.55}.entry-arrow{fill:#45d483}.entry-top-label{fill:#9ef0bd;font-size:9px;font-weight:800;letter-spacing:.03em;paint-order:stroke;stroke:#07111f;stroke-width:3px}.entry-price-line{stroke:#45d483;stroke-width:1.2;stroke-dasharray:6 4;opacity:.72}.entry-perf-pos{fill:#83e7aa;font-size:10px;font-weight:750}.entry-perf-neg{fill:#f1919e;font-size:10px;font-weight:750}.macd-zero{stroke:#40516d;stroke-width:1}.macd-bar-pos{fill:#61d4c7;opacity:.9}.macd-bar-neg{fill:#f16978;opacity:.9}.macd-line{fill:none;stroke:#3da5ff;stroke-width:1.7}.signal-line{fill:none;stroke:#ff8a3d;stroke-width:1.7}.legend-ma20{fill:#45d483;font-size:10px}.legend-ma50{fill:#f2bf55;font-size:10px}.legend-bb{fill:#91a5c2;font-size:10px}
     .opportunity-shell{border:1px solid #34506f;background:linear-gradient(180deg,rgba(16,37,57,.98),rgba(10,23,39,.98));box-shadow:0 0 0 1px rgba(84,215,239,.05),0 18px 44px rgba(0,0,0,.18)}.opportunity-shell.has-alert{border-color:#3f856c;box-shadow:0 0 0 1px rgba(69,212,131,.10),0 18px 44px rgba(0,0,0,.20)}.opportunity-title{display:flex;align-items:center;gap:9px}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#66778f}.has-alert .pulse-dot{background:var(--green);box-shadow:0 0 0 5px rgba(69,212,131,.10)}.count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;border-radius:999px;padding:0 7px;background:#142943;border:1px solid #2f4c70;color:#dcecff;font-size:11px;font-weight:750}.has-alert .count-badge{background:rgba(69,212,131,.10);border-color:#34745e;color:#8ff0b5}.opp-col{min-width:0}.opp-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px;font-weight:750}.opp-threshold{font-size:10px;color:var(--muted);font-weight:500}.portfolio-note{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 12px}.portfolio-pill{border:1px solid #2b405f;background:#0b1728;border-radius:9px;padding:8px 10px;font-size:11px;color:#aebdd2}.portfolio-pill b{display:block;color:#eef5ff;font-size:13px;margin-top:2px}
     details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:#aebdd2;font-size:12px}.method{font-size:12px;color:var(--muted);line-height:1.6}
     @media(max-width:1150px){.kpis{grid-template-columns:repeat(3,1fr)}.grid-2,.grid-even{grid-template-columns:1fr}.grid-3{grid-template-columns:1fr 1fr}}
@@ -1006,9 +1001,9 @@ def render_dashboard(
 
     <div class='panel entry-panel' id='entry-top3'>
       <div class='section-head'><div><div class='section-kicker'>Priority setup</div><h2>Top 3 ứng viên mở vị thế — Model</h2></div><span class='tag'>Strict technical gate</span></div>
-      <div class='entry-rule'><span class='rule-pill'>Fresh trigger</span><span class='rule-pill'>MACD &gt; 0 + Histogram &gt; 0</span><span class='rule-pill'>MA20 &gt; MA50</span><span class='rule-pill'>≤ 15% trên MA20</span><span class='rule-pill'>5 phiên ≤ +18%</span><span class='rule-pill'>≤ 3 phiên từ entry</span><span class='rule-pill'>≤ +8% từ entry</span></div>
-      <div class='note' style='margin-bottom:10px'>Đây là <b>fresh entry</b>, không phải bảng các mã mạnh nhất hiện tại. Model chỉ giữ setup còn mới, chưa chạy quá xa khỏi điểm trigger và chưa quá căng so với MA20/5 phiên. Nếu không đủ 3 mã thì để trống thay vì đuổi giá.</div>
-      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_date','entry_price','current_price','since_entry_pct','entry_age_sessions','entry_reason','entry_score_current','sector_score','leadership_score','short_momentum_score','long_momentum_score','stage'],3)}</div>
+      <div class='entry-rule'><span class='rule-pill'>Daily + Weekly trend confirm</span><span class='rule-pill'>RS 60/120 &gt; benchmark</span><span class='rule-pill'>RS 60 &gt; sector</span><span class='rule-pill'>Leadership bền 10 phiên</span><span class='rule-pill'>Entry gần MA20</span><span class='rule-pill'>≤ +10% / 5 phiên</span><span class='rule-pill'>≤ 2 phiên từ entry</span><span class='rule-pill'>≤ +5% từ entry</span></div>
+      <div class='note' style='margin-bottom:10px'>V3 chỉ tìm <b>real strength đã được xác nhận ở khung lớn</b>, sau đó chờ pullback-resume hoặc breakout từ vùng siết để vào. MA cross và việc điểm momentum vừa vượt 80 không còn được dùng làm trigger độc lập, vì hai tín hiệu này dễ xuất hiện sau khi giá đã chạy xa.</div>
+      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_date','entry_price','current_price','since_entry_pct','entry_age_sessions','entry_reason','entry_score_current','leadership_med10','long_med10','sector_med10','stage'],3)}</div>
       <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>6-month technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>~126 phiên</span></div>
       {entry_chart_html}
     </div>
@@ -1082,6 +1077,6 @@ def render_dashboard(
     </div>
 
     <div class='disclaimer'>Dashboard là công cụ nghiên cứu định lượng, không phải tín hiệu mua/bán tự động. “Dòng tiền” trong V1 là proxy từ giá, khối lượng và giá trị giao dịch, không phải số liệu mua ròng của tổ chức. Backtest hiện dùng universe sản xuất hiện tại nên chưa loại bỏ hoàn toàn survivorship bias; kết quả kiểm định nên được xem là diagnostic cho đến khi hoàn thành point-in-time universe và backfill mã hủy niêm yết.</div>
-    <details id='method'><summary>Phương pháp & cách đọc dashboard</summary><div class='method'><p><b>Leadership Score</b> tổng hợp Relative Strength, Flow proxy, Trend quality và Sector confirmation. <b>Acceleration</b> là thay đổi điểm trong 5 phiên. <b>SM ngắn hạn</b> nhấn mạnh RS 5/20 phiên, thanh khoản, MA20 slope và participation; <b>SM dài hạn</b> nhấn mạnh RS 60/120 phiên, MA50 slope, vị trí so với MA50 và đỉnh 52 tuần. Hai điểm đều là percentile cross-section 0–100.</p><p><b>Cơ hội mới</b> chỉ bật khi điểm hôm nay vượt ngưỡng 80 từ dưới ngưỡng ở phiên hợp lệ trước và ngành có Sector Score đủ mạnh. <b>Model Portfolio 10</b> đi theo funnel ngành → cổ phiếu: ngành xếp theo Sector Score, cổ phiếu trong ngành xếp theo Leadership/SM/Flow, tối đa {portfolio_sector_cap} mã mỗi ngành và chia đều tỷ trọng.</p><p>Sector Rotation được dùng để phân biệt cổ phiếu mạnh nhờ riêng lẻ với cổ phiếu được xác nhận bởi ngành. Regime tổng hợp market breadth, return và liquidity để mô tả bối cảnh, không dùng như dự báo chắc chắn cho VN-Index.</p></div></details>
+    <details id='method'><summary>Phương pháp & cách đọc dashboard</summary><div class='method'><p><b>Leadership Score</b> tổng hợp Relative Strength, Flow proxy, Trend quality và Sector confirmation. <b>Acceleration</b> là thay đổi điểm trong 5 phiên. <b>SM ngắn hạn</b> nhấn mạnh RS 5/20 phiên, thanh khoản, MA20 slope và participation; <b>SM dài hạn</b> nhấn mạnh RS 60/120 phiên, MA50 slope, vị trí so với MA50 và đỉnh 52 tuần. Hai điểm đều là percentile cross-section 0–100.</p><p><b>Fresh Entry V3</b> tách Strength và Timing. Strength phải tồn tại bền qua 10 phiên, vượt benchmark/sector ở 60–120 phiên, đồng thời cấu trúc daily và weekly đều xác nhận. Timing chỉ xuất hiện khi giá quay lại gần MA20 rồi resume, hoặc breakout khỏi vùng Bollinger squeeze nhưng chưa bị kéo xa. <b>Model Portfolio 10</b> vẫn đi theo funnel ngành → cổ phiếu và không đồng nghĩa với điểm mở vị thế mới.</p><p>Sector Rotation được dùng để phân biệt cổ phiếu mạnh nhờ riêng lẻ với cổ phiếu được xác nhận bởi ngành. Regime tổng hợp market breadth, return và liquidity để mô tả bối cảnh, không dùng như dự báo chắc chắn cho VN-Index.</p></div></details>
     </div></body></html>"""
     Path(out_path).write_text(html_doc,encoding='utf-8')
