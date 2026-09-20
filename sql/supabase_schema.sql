@@ -45,6 +45,21 @@ create table if not exists public.mf_scores_daily (
 create index if not exists mf_scores_daily_ticker_date_idx on public.mf_scores_daily(ticker, trade_date desc);
 create index if not exists mf_scores_daily_date_score_idx on public.mf_scores_daily(trade_date desc, leadership_score desc);
 
+
+create table if not exists public.mf_entry_signals (
+  signal_date date not null,
+  ticker text not null,
+  sector text,
+  entry_price double precision,
+  entry_score double precision,
+  entry_reason text,
+  model_version text not null,
+  created_at timestamptz not null default now(),
+  primary key (signal_date, ticker, model_version)
+);
+create index if not exists mf_entry_signals_ticker_date_idx
+  on public.mf_entry_signals(ticker, signal_date desc);
+
 create table if not exists public.mf_sector_daily (
   trade_date date not null,
   sector text not null,
@@ -83,6 +98,7 @@ create table if not exists public.mf_runs (
 alter table public.mf_universe enable row level security;
 alter table public.mf_ohlcv_daily enable row level security;
 alter table public.mf_scores_daily enable row level security;
+alter table public.mf_entry_signals enable row level security;
 alter table public.mf_sector_daily enable row level security;
 alter table public.mf_market_regime enable row level security;
 alter table public.mf_runs enable row level security;
