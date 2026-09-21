@@ -1196,6 +1196,11 @@ def render_dashboard(
         require_weekly_trend=entry_kwargs['require_weekly_trend'],
         max_ma20_distance=entry_kwargs['max_ma20_distance'],
         max_ret5=entry_kwargs['max_ret5'],
+        adaptive_entry_volatility=entry_kwargs['adaptive_entry_volatility'],
+        ma20_atr_multiple=entry_kwargs['ma20_atr_multiple'],
+        ret5_atr_multiple=entry_kwargs['ret5_atr_multiple'],
+        min_local_ma20_cap=entry_kwargs['min_local_ma20_cap'],
+        min_local_ret5_cap=entry_kwargs['min_local_ret5_cap'],
     )
     if entry_candidates.empty:
         entry_status_html = (
