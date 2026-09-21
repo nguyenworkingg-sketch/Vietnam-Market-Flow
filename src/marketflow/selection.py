@@ -323,8 +323,11 @@ def build_entry_signal_history(
     if e.empty:
         return e
 
+    e['_real_for_entry'] = pd.to_numeric(
+        e['real_strength_med10'], errors='coerce'
+    ).fillna(pd.to_numeric(e['leadership_med10'], errors='coerce'))
     e['entry_score'] = (
-        0.25 * pd.to_numeric(e['real_strength_med10'], errors='coerce')
+        0.25 * e['_real_for_entry']
         + 0.20 * pd.to_numeric(e['leadership_med10'], errors='coerce')
         + 0.15 * pd.to_numeric(e['long_med10'], errors='coerce')
         + 0.15 * pd.to_numeric(e['sector_med10'], errors='coerce')
