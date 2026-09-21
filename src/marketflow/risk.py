@@ -52,7 +52,8 @@ def _entry_risk_params(signal_row: pd.Series | None, cfg: dict) -> dict:
     atr_pct = _num(signal_row.get('atr_pct_20')) if signal_row is not None else np.nan
     atr_regime = _num(signal_row.get('atr_regime_ratio'), 1.0) if signal_row is not None else 1.0
 
-    if adaptive and np.isfinite(atr_pct) and atr_pct > 0:
+    adaptive_used = adaptive and np.isfinite(atr_pct) and atr_pct > 0
+    if adaptive_used:
         stop_pct = _clip(
             float(cfg.get('stop_atr_multiple', 2.0)) * atr_pct,
             float(cfg.get('min_stop_pct', 0.05)),
@@ -61,24 +62,23 @@ def _entry_risk_params(signal_row: pd.Series | None, cfg: dict) -> dict:
     else:
         stop_pct = base_stop
 
+    legacy_arm = cfg.get('profit_arm_pct')
+    arm_lo = float(cfg.get('min_profit_arm_pct', legacy_arm if legacy_arm is not None else 0.10))
+    arm_hi = float(cfg.get('max_profit_arm_pct', legacy_arm if legacy_arm is not None else 0.22))
+    legacy_floor = cfg.get('profit_floor_pct')
+    floor_lo = float(cfg.get('min_profit_floor_pct', legacy_floor if legacy_floor is not None else 0.02))
+    floor_hi = float(cfg.get('max_profit_floor_pct', legacy_floor if legacy_floor is not None else 0.06))
     profit_arm = _clip(
-        max(
-            float(cfg.get('min_profit_arm_pct', 0.10)),
-            float(cfg.get('profit_arm_r', 1.5)) * stop_pct,
-        ),
-        float(cfg.get('min_profit_arm_pct', 0.10)),
-        float(cfg.get('max_profit_arm_pct', 0.22)),
+        max(arm_lo, float(cfg.get('profit_arm_r', 1.5)) * stop_pct),
+        arm_lo, max(arm_lo, arm_hi),
     )
     profit_floor = _clip(
-        max(
-            float(cfg.get('min_profit_floor_pct', 0.02)),
-            float(cfg.get('profit_floor_r', 0.30)) * stop_pct,
-        ),
-        float(cfg.get('min_profit_floor_pct', 0.02)),
-        float(cfg.get('max_profit_floor_pct', 0.06)),
+        max(floor_lo, float(cfg.get('profit_floor_r', 0.30)) * stop_pct),
+        floor_lo, max(floor_lo, floor_hi),
     )
     return {
         'adaptive': adaptive,
+        'adaptive_used': adaptive_used,
         'atr_pct': atr_pct,
         'atr_regime_ratio': atr_regime,
         'stop_pct': stop_pct,
@@ -198,13 +198,19 @@ def simulate_position_lifecycle(
             if np.isfinite(op) and op <= active_stop:
                 exit_date = dt
                 exit_price = op
-                exit_reason = 'TRAILING_PROFIT_STOP_GAP' if armed else 'VOL_ADAPTIVE_STOP_GAP'
+                exit_reason = (
+                    'TRAILING_PROFIT_STOP_GAP' if armed
+                    else ('VOL_ADAPTIVE_STOP_GAP' if params['adaptive_used'] else 'HARD_STOP_GAP')
+                )
                 status = 'CLOSED'
                 break
             if np.isfinite(lo) and lo <= active_stop:
                 exit_date = dt
                 exit_price = active_stop
-                exit_reason = 'TRAILING_PROFIT_STOP' if armed else 'VOL_ADAPTIVE_STOP'
+                exit_reason = (
+                    'TRAILING_PROFIT_STOP' if armed
+                    else ('VOL_ADAPTIVE_STOP' if params['adaptive_used'] else 'HARD_STOP')
+                )
                 status = 'CLOSED'
                 break
 
@@ -284,6 +290,7 @@ def simulate_position_lifecycle(
             'peak_date': peak_date,
             'peak_return': peak_return,
             'drawdown_from_peak': drawdown_from_peak,
+            'risk_mode': 'ATR_ADAPTIVE' if params['adaptive_used'] else 'FIXED_FALLBACK',
             'atr_pct_at_entry': params['atr_pct'],
             'atr_regime_ratio_at_entry': params['atr_regime_ratio'],
             'adaptive_stop_pct': stop_pct,
