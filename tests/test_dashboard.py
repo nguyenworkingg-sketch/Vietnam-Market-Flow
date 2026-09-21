@@ -160,6 +160,9 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert "id='stock-chart-range'" in text
     assert '12 tháng' in text
     assert 'v2-causal-2026-09-20' in text
+    assert "id='stock-life-data'" in text
+    assert 'V2 AUDIT' in text
+    assert 'risk replay' in text
     assert 'Alpha theo decile' in text
     assert '<svg' in text
 
@@ -232,3 +235,50 @@ def test_dashboard_falls_back_to_watchlist_when_no_fresh_entry(tmp_path):
     assert 'Top 3 Near Entry / Watchlist' in text
     assert 'WATCHLIST — NOT ENTRY' in text
     assert 'model không ép đủ Top 3' in text
+
+
+
+def test_historical_signal_chart_replays_cut_loss_not_current_mark_to_market(tmp_path):
+    dates = pd.bdate_range('2026-05-20', periods=20)
+    latest = pd.DataFrame([{
+        'date': dates[-1], 'ticker':'HSG', 'sector':'Tài nguyên Cơ bản',
+        'leadership_score':36.9, 'short_momentum_score':32.3, 'long_momentum_score':32.5,
+        'acceleration':-5, 'rs_score':30, 'flow_score':35, 'trend_score':30,
+        'sector_score':45, 'stage':'FADING', 'close':10.1,
+    }])
+    rows=[]
+    closes=[12.8,12.7,12.5,12.3,12.1,11.9,11.7,11.5,11.4,11.2,11.0,10.9,10.8,10.7,10.6,10.5,10.4,10.3,10.2,10.1]
+    for i,d in enumerate(dates):
+        cl=closes[i]
+        rows.append({
+            'date':d,'ticker':'HSG','open':cl,'high':cl+.1,'low':cl-.15,'close':cl,
+            'volume':1_000_000,'ma20':12.5-i*.08,'ma50':12.6-i*.06,
+            'bb_upper':13.0,'bb_lower':10.0,'macd':-.1,'macd_signal':-.05,'macd_hist':-.05,
+            'ma20_slope_5':-.01,'weekly_trend_confirm':False,
+        })
+    px=pd.DataFrame(rows)
+    scored=px[['date','ticker','close','ma20','ma20_slope_5','weekly_trend_confirm']].copy()
+    scored['sector']='Tài nguyên Cơ bản'
+    scored['real_strength_score']=40
+    scored['leadership_score']=40
+    scored['trend_score']=40
+    scored['short_momentum_score']=40
+    scored['long_momentum_score']=40
+    scored['sector_score']=45
+    scored['stage']='FADING'
+    audit=pd.DataFrame([{
+        'entry_date':dates[0]-pd.Timedelta(days=1),'ticker':'HSG','sector':'Tài nguyên Cơ bản',
+        'entry_price':12.8,'entry_score':88,'entry_reason':'BB squeeze breakout',
+        'model_version':'v2-causal-2026-09-20',
+    }])
+    out=tmp_path/'hsg.html'
+    render_dashboard(
+        latest, {'regime':'NEUTRAL','market_score':50,'breadth_ma20':.4,'breadth_ma50':.4},
+        out, scored_history=scored, price_history=px, historical_entry_events=audit,
+        risk_cfg={'hard_stop_pct':.05,'profit_arm_pct':.08,'profit_floor_pct':.02,
+                  'peak_trail_pct':.07,'strength_break_votes':2},
+    )
+    text=out.read_text(encoding='utf-8')
+    assert 'V2 AUDIT' in text
+    assert 'CUT LOSS' in text
+    assert 'Từ entry' not in text
