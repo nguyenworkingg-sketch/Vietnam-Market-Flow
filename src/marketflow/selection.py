@@ -176,6 +176,9 @@ def build_entry_signal_history(
     min_leadership_score: float = 70.0,
     min_short_score: float = 65.0,
     min_long_score: float = 70.0,
+    min_real_strength_score: float = 0.0,
+    min_rs_persistence: int = 0,
+    require_residual_momentum: bool = False,
     require_macd_positive: bool = True,
     require_medium_trend: bool = True,
     require_weekly_trend: bool = True,
@@ -208,6 +211,8 @@ def build_entry_signal_history(
         'bb_squeeze_recent_10','bb_breakout_after_squeeze','prior_high_10',
         'medium_trend_confirm','weekly_trend_confirm','weekly_ret12',
         'rs_60','rs_120','rs_sector_60','sector_rs_60',
+        'real_strength_score','residual_mom_60','residual_mom_120',
+        'rs_persistence_count','path_quality_60','return_concentration_60',
     ]
     for col in needed:
         if col not in x.columns:
@@ -226,6 +231,9 @@ def build_entry_signal_history(
     x['sector_med10'] = g['sector_score'].transform(
         lambda s: s.rolling(10, min_periods=5).median()
     )
+    x['real_strength_med10'] = g['real_strength_score'].transform(
+        lambda s: s.rolling(10, min_periods=5).median()
+    )
 
     persistent_strength = (
         pd.to_numeric(x['leadership_med10'], errors='coerce').ge(float(min_leadership_score))
@@ -238,6 +246,19 @@ def build_entry_signal_history(
         & pd.to_numeric(x['sector_rs_60'], errors='coerce').gt(0)
         & pd.to_numeric(x['weekly_ret12'], errors='coerce').gt(0)
     )
+    if float(min_real_strength_score) > 0:
+        persistent_strength &= pd.to_numeric(
+            x['real_strength_med10'], errors='coerce'
+        ).ge(float(min_real_strength_score))
+    if int(min_rs_persistence) > 0:
+        persistent_strength &= pd.to_numeric(
+            x['rs_persistence_count'], errors='coerce'
+        ).ge(int(min_rs_persistence))
+    if require_residual_momentum:
+        persistent_strength &= (
+            pd.to_numeric(x['residual_mom_60'], errors='coerce').gt(0)
+            & pd.to_numeric(x['residual_mom_120'], errors='coerce').gt(0)
+        )
     if require_medium_trend:
         persistent_strength &= x['medium_trend_confirm'].fillna(False).astype(bool)
     if require_weekly_trend:
@@ -302,13 +323,17 @@ def build_entry_signal_history(
     if e.empty:
         return e
 
+    e['_real_for_entry'] = pd.to_numeric(
+        e['real_strength_med10'], errors='coerce'
+    ).fillna(pd.to_numeric(e['leadership_med10'], errors='coerce'))
     e['entry_score'] = (
-        0.25 * pd.to_numeric(e['leadership_med10'], errors='coerce')
-        + 0.25 * pd.to_numeric(e['long_med10'], errors='coerce')
-        + 0.20 * pd.to_numeric(e['sector_med10'], errors='coerce')
+        0.25 * e['_real_for_entry']
+        + 0.20 * pd.to_numeric(e['leadership_med10'], errors='coerce')
+        + 0.15 * pd.to_numeric(e['long_med10'], errors='coerce')
+        + 0.15 * pd.to_numeric(e['sector_med10'], errors='coerce')
         + 0.10 * pd.to_numeric(e['short_momentum_score'], errors='coerce')
-        + 0.10 * pd.to_numeric(e['flow_score'], errors='coerce')
-        + 0.10 * pd.to_numeric(e['trend_score'], errors='coerce')
+        + 0.075 * pd.to_numeric(e['flow_score'], errors='coerce')
+        + 0.075 * pd.to_numeric(e['trend_score'], errors='coerce')
     ).fillna(0)
     e['entry_score'] += squeeze_breakout.loc[e.index].astype(float) * float(squeeze_bonus)
     e['entry_score'] += pullback_resume.loc[e.index].astype(float) * float(pullback_bonus)
@@ -321,8 +346,10 @@ def build_entry_signal_history(
     e = e.rename(columns={'date':'entry_date'})
     cols = [
         'entry_date','ticker','sector','entry_price','entry_score','entry_reason',
-        'leadership_med10','long_med10','sector_med10','short_momentum_score',
-        'flow_score','trend_score','rs_60','rs_120','rs_sector_60','sector_rs_60',
+        'real_strength_med10','leadership_med10','long_med10','sector_med10','short_momentum_score',
+        'flow_score','trend_score','real_strength_score','residual_mom_60','residual_mom_120',
+        'rs_persistence_count','path_quality_60','return_concentration_60',
+        'rs_60','rs_120','rs_sector_60','sector_rs_60',
         'weekly_ret12','medium_trend_confirm','weekly_trend_confirm',
         'ret_5','ma20_distance','volume_ratio_20','macd','macd_hist','ma20','ma50','stage',
     ]
@@ -338,6 +365,9 @@ def build_entry_candidates(
     min_leadership_score: float = 70.0,
     min_short_score: float = 65.0,
     min_long_score: float = 70.0,
+    min_real_strength_score: float = 0.0,
+    min_rs_persistence: int = 0,
+    require_residual_momentum: bool = False,
     require_macd_positive: bool = True,
     require_medium_trend: bool = True,
     require_weekly_trend: bool = True,
@@ -348,7 +378,7 @@ def build_entry_candidates(
     squeeze_bonus: float = 5.0,
     pullback_bonus: float = 3.0,
 ) -> pd.DataFrame:
-    """Return only fresh v3 entries that are still close to the original trigger."""
+    """Return only fresh entries whose V4 real strength remains confirmed."""
     if scored_history is None or scored_history.empty or top_n <= 0:
         return pd.DataFrame()
 
@@ -364,6 +394,9 @@ def build_entry_candidates(
         min_leadership_score=min_leadership_score,
         min_short_score=min_short_score,
         min_long_score=min_long_score,
+        min_real_strength_score=min_real_strength_score,
+        min_rs_persistence=min_rs_persistence,
+        require_residual_momentum=require_residual_momentum,
         require_macd_positive=require_macd_positive,
         require_medium_trend=require_medium_trend,
         require_weekly_trend=require_weekly_trend,
@@ -378,7 +411,9 @@ def build_entry_candidates(
     recent_events = events.sort_values(['ticker','entry_date']).groupby('ticker', as_index=False).tail(1)
     current_cols = [
         'ticker','sector','close','sector_score','leadership_score','short_momentum_score',
-        'long_momentum_score','flow_score','trend_score','ma20_distance','ret_5',
+        'long_momentum_score','flow_score','trend_score','real_strength_score',
+        'residual_mom_60','residual_mom_120','rs_persistence_count','path_quality_60',
+        'ma20_distance','ret_5',
         'medium_trend_confirm','weekly_trend_confirm','stage',
     ]
     current = latest[[col for col in current_cols if col in latest.columns]].copy().rename(columns={
@@ -389,6 +424,11 @@ def build_entry_candidates(
         'long_momentum_score':'long_momentum_score_current',
         'flow_score':'flow_score_current',
         'trend_score':'trend_score_current',
+        'real_strength_score':'real_strength_score_current',
+        'residual_mom_60':'residual_mom_60_current',
+        'residual_mom_120':'residual_mom_120_current',
+        'rs_persistence_count':'rs_persistence_count_current',
+        'path_quality_60':'path_quality_60_current',
         'ma20_distance':'ma20_distance_current',
         'ret_5':'ret_5_current',
         'medium_trend_confirm':'medium_trend_confirm_current',
@@ -420,6 +460,19 @@ def build_entry_candidates(
         & pd.to_numeric(merged['ma20_distance_current'], errors='coerce').le(float(max_ma20_distance))
         & pd.to_numeric(merged['ret_5_current'], errors='coerce').le(float(max_ret5))
     )
+    if float(min_real_strength_score) > 0:
+        current_ok &= pd.to_numeric(
+            merged['real_strength_score_current'], errors='coerce'
+        ).ge(float(min_real_strength_score))
+    if int(min_rs_persistence) > 0:
+        current_ok &= pd.to_numeric(
+            merged['rs_persistence_count_current'], errors='coerce'
+        ).ge(int(min_rs_persistence))
+    if require_residual_momentum:
+        current_ok &= (
+            pd.to_numeric(merged['residual_mom_60_current'], errors='coerce').gt(0)
+            & pd.to_numeric(merged['residual_mom_120_current'], errors='coerce').gt(0)
+        )
     if require_medium_trend:
         current_ok &= merged['medium_trend_confirm_current'].fillna(False).astype(bool)
     if require_weekly_trend:
@@ -444,8 +497,10 @@ def build_entry_candidates(
     cols = [
         'entry_rank','ticker','sector','entry_date','entry_price','current_price',
         'since_entry_pct','entry_age_sessions','fresh_entry_score','entry_score','entry_reason',
-        'leadership_med10','long_med10','sector_med10',
-        'sector_score_current','leadership_score_current','short_momentum_score_current',
+        'real_strength_med10','leadership_med10','long_med10','sector_med10',
+        'sector_score_current','leadership_score_current','real_strength_score_current',
+        'residual_mom_60_current','residual_mom_120_current','rs_persistence_count_current',
+        'path_quality_60_current','short_momentum_score_current',
         'long_momentum_score_current','flow_score_current','trend_score_current',
         'medium_trend_confirm_current','weekly_trend_confirm_current','stage_current',
     ]
@@ -453,6 +508,11 @@ def build_entry_candidates(
         'fresh_entry_score':'entry_score_current',
         'sector_score_current':'sector_score',
         'leadership_score_current':'leadership_score',
+        'real_strength_score_current':'real_strength_score',
+        'residual_mom_60_current':'residual_mom_60',
+        'residual_mom_120_current':'residual_mom_120',
+        'rs_persistence_count_current':'rs_persistence_count',
+        'path_quality_60_current':'path_quality_60',
         'short_momentum_score_current':'short_momentum_score',
         'long_momentum_score_current':'long_momentum_score',
         'flow_score_current':'flow_score',

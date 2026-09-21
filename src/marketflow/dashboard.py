@@ -16,6 +16,12 @@ DISPLAY = {
     'leadership_score': 'Điểm dẫn dắt',
     'acceleration': 'Tăng tốc 5 phiên',
     'rs_score': 'Sức mạnh tương đối',
+    'real_strength_score': 'Real Strength',
+    'real_strength_med10': 'Real Strength 10P',
+    'residual_mom_60': 'Residual 60P',
+    'residual_mom_120': 'Residual 120P',
+    'rs_persistence_count': 'RS horizons +',
+    'path_quality_60': 'Path quality',
     'flow_score': 'Dòng tiền',
     'trend_score': 'Chất lượng xu hướng',
     'sector_score': 'Sức mạnh ngành',
@@ -444,19 +450,19 @@ def _stock_chart_explorer(
         const events=allEvents.filter(e=>dateIndex[e[0]]!==undefined);
         events.forEach((e,k)=>{{
           const idx=dateIndex[e[0]],x=sx(idx),y=sy(e[1]);
-          const currentModel=(e[4]||'').startsWith('v3-');
+          const currentModel=(e[4]||'').startsWith('v4-');
           const marker=currentModel?'#45d483':'#f2bf55';
           const labelY=PT+14+(k%2)*13;
           ctx.strokeStyle=currentModel?'rgba(69,212,131,.55)':'rgba(242,191,85,.48)';ctx.setLineDash([3,5]);
           ctx.beginPath();ctx.moveTo(x,PT+26);ctx.lineTo(x,y-6);ctx.stroke();ctx.setLineDash([]);
           ctx.fillStyle=marker;ctx.beginPath();ctx.moveTo(x,y-1);ctx.lineTo(x-5,y-9);ctx.lineTo(x+5,y-9);ctx.closePath();ctx.fill();
           ctx.fillStyle=currentModel?'#9ef0bd':'#f6d991';ctx.font='700 9px system-ui';ctx.textAlign='center';
-          ctx.fillText((currentModel?'ENTRY V3 ':'LEGACY ')+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
+          ctx.fillText((currentModel?'ENTRY V4 ':'LEGACY ')+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
           ctx.textAlign='left';
         }});
         if(events.length) {{
           const e=events[events.length-1],idx=dateIndex[e[0]],ep=e[1],y=sy(ep),last=rows[rows.length-1][4],perf=last/ep-1;
-          const currentModel=(e[4]||'').startsWith('v3-');
+          const currentModel=(e[4]||'').startsWith('v4-');
           ctx.strokeStyle=currentModel?'#45d483':'#f2bf55';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
           ctx.fillStyle=perf>=0?'#83e7aa':'#f1919e';ctx.font='700 11px system-ui';ctx.fillText('Từ entry '+(perf*100>=0?'+':'')+(perf*100).toFixed(1)+'%',Math.max(L,sx(rows.length-1)-105),y-7);
         }}
@@ -470,10 +476,10 @@ def _stock_chart_explorer(
         const last=rows[rows.length-1][4];
         let s=(meta.sector||'')+' · Leadership '+fmt(meta.leadership)+' · SM NH '+fmt(meta.short)+' · SM DH '+fmt(meta.long);
         if(ev) {{
-          const tag=(ev[4]||'').startsWith('v3-')?'V3':'Legacy';
+          const tag=(ev[4]||'').startsWith('v3-')?'V4':'Legacy';
           s+=' · '+tag+' entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
         }} else if(lastAll) {{
-          const tag=(lastAll[4]||'').startsWith('v3-')?'V3':'Legacy V2';
+          const tag=(lastAll[4]||'').startsWith('v3-')?'V4':'Legacy';
           s+=' · Không có entry trong '+(rangeN===126?'6M':'12M')+' · gần nhất '+tag+' '+lastAll[0]+' @ '+fmt(lastAll[1]);
         }} else {{
           s+=' · Chưa từng có entry signal được lưu';
@@ -944,6 +950,9 @@ def render_dashboard(
         min_leadership_score=float(opp_cfg.get('entry_min_leadership_score',70)),
         min_short_score=float(opp_cfg.get('entry_min_short_score',65)),
         min_long_score=float(opp_cfg.get('entry_min_long_score',70)),
+        min_real_strength_score=float(opp_cfg.get('entry_min_real_strength_score',0)),
+        min_rs_persistence=int(opp_cfg.get('entry_min_rs_persistence',0)),
+        require_residual_momentum=bool(opp_cfg.get('entry_require_residual_momentum',False)),
         require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive',True)),
         require_medium_trend=bool(opp_cfg.get('entry_require_medium_trend',True)),
         require_weekly_trend=bool(opp_cfg.get('entry_require_weekly_trend',True)),
@@ -1029,16 +1038,16 @@ def render_dashboard(
 
     <div class='panel entry-panel' id='entry-top3'>
       <div class='section-head'><div><div class='section-kicker'>Priority setup</div><h2>Top 3 ứng viên mở vị thế — Model</h2></div><span class='tag'>Strict technical gate</span></div>
-      <div class='entry-rule'><span class='rule-pill'>Daily + Weekly trend confirm</span><span class='rule-pill'>RS 60/120 &gt; benchmark</span><span class='rule-pill'>RS 60 &gt; sector</span><span class='rule-pill'>Leadership bền 10 phiên</span><span class='rule-pill'>Entry gần MA20</span><span class='rule-pill'>≤ +10% / 5 phiên</span><span class='rule-pill'>≤ 2 phiên từ entry</span><span class='rule-pill'>≤ +5% từ entry</span></div>
-      <div class='note' style='margin-bottom:10px'>V3 chỉ tìm <b>real strength đã được xác nhận ở khung lớn</b>, sau đó chờ pullback-resume hoặc breakout từ vùng siết để vào. MA cross và việc điểm momentum vừa vượt 80 không còn được dùng làm trigger độc lập, vì hai tín hiệu này dễ xuất hiện sau khi giá đã chạy xa.</div>
-      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_date','entry_price','current_price','since_entry_pct','entry_age_sessions','entry_reason','entry_score_current','leadership_med10','long_med10','sector_med10','stage'],3)}</div>
+      <div class='entry-rule'><span class='rule-pill'>Residual momentum 60/120 &gt; 0</span><span class='rule-pill'>RS vs sector &gt; 0</span><span class='rule-pill'>Sector vs market &gt; 0</span><span class='rule-pill'>≥ 2 RS horizons dương</span><span class='rule-pill'>Daily + Weekly confirm</span><span class='rule-pill'>Entry gần MA20</span><span class='rule-pill'>Anti-chase</span></div>
+      <div class='note' style='margin-bottom:10px'>V4 tách <b>strength</b> khỏi <b>timing</b>: strength phải còn dương sau khi điều chỉnh market/sector, bền qua nhiều horizon và có path quality tốt; chỉ sau đó model mới chờ pullback-resume hoặc squeeze breakout. Raw RS so với VN-Index không còn đủ để một mã vượt gate.</div>
+      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_date','entry_price','current_price','since_entry_pct','entry_age_sessions','entry_reason','entry_score_current','real_strength_med10','residual_mom_60','residual_mom_120','rs_persistence_count','path_quality_60','stage'],3)}</div>
       <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>6-month technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>~126 phiên</span></div>
       {entry_chart_html}
     </div>
 
     <div class='panel section' id='chart-explorer'>
       <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6M / 12M · Versioned history</span></div>
-      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V3 hiện tại hiển thị màu xanh; tín hiệu từ phương pháp V2 cũ được giữ lại dưới dạng Legacy màu vàng để audit, không được xem là tín hiệu hiện hành.</div>
+      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V4 hiện tại hiển thị màu xanh; tín hiệu từ V2/V3 cũ được giữ lại dưới dạng Legacy màu vàng để audit, không được xem là tín hiệu hiện hành.</div>
       {stock_explorer_html}
     </div>
 

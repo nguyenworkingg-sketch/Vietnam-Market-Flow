@@ -32,7 +32,7 @@ def main():
 
     out = ROOT/'outputs'/'backtest'
     out.mkdir(parents=True, exist_ok=True)
-    for name in ['deciles', 'stage_entries', 'ic_daily', 'ic_summary', 'summary']:
+    for name in ['deciles', 'stage_entries', 'ic_daily', 'ic_summary', 'summary', 'score_comparison']:
         suite[name].to_csv(out/f'{name}.csv', index=False)
 
     entry_path = ROOT/'outputs'/'entry_signal_history.csv'
@@ -70,6 +70,7 @@ def main():
         'stage_entries': suite['stage_entries'],
         'ic_summary': suite['ic_summary'],
         'entry_signal_summary': entry_summary,
+        'score_comparison': suite['score_comparison'],
     }
     cfg = yaml.safe_load((ROOT/'config'/'model.yaml').read_text(encoding='utf-8'))
     opp_cfg = cfg.get('opportunities', {})
@@ -92,6 +93,7 @@ def main():
         backtest=bt_payload,
         opportunity_cfg=opp_cfg,
         price_history=panel,
+        historical_entry_events=entry_audit,
     )
 
     signal_rows = int(panel['leadership_score'].notna().sum())

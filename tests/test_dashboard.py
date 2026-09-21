@@ -119,7 +119,7 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     price_history=pd.DataFrame(price_rows)
 
     historical_entries = pd.DataFrame([{
-        'entry_date': pd.Timestamp('2026-02-11'),
+        'entry_date': pd.Timestamp('2026-07-15'),
         'ticker': 'AAA',
         'sector': 'Ngân hàng',
         'entry_price': 25.0,

@@ -140,7 +140,14 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         out = root / 'outputs'
         out.mkdir(exist_ok=True)
         latest.sort_values('leadership_score', ascending=False).to_csv(out / 'scores_latest.csv', index=False)
-        hist = scored[['date','ticker','sector','leadership_score','short_momentum_score','long_momentum_score','acceleration','rs_score','flow_score','trend_score','sector_score','stage']]
+        hist_cols = [
+            'date','ticker','sector','leadership_score','real_strength_score',
+            'short_momentum_score','long_momentum_score','acceleration','rs_score',
+            'flow_score','trend_score','sector_score','residual_mom_60','residual_mom_120',
+            'rs_sector_60','sector_rs_60','rs_persistence_count','path_quality_60',
+            'return_concentration_60','stage',
+        ]
+        hist = scored[[col for col in hist_cols if col in scored.columns]]
         try:
             hist.to_parquet(out / 'scores_history.parquet', index=False)
         except Exception:
@@ -160,12 +167,19 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             'weekly_ret12','weekly_macd','weekly_macd_signal','weekly_macd_hist','weekly_trend_confirm',
             'macd','macd_signal','macd_hist','macd_positive','ma_bull','ma_cross_up','ma_cross_recent_10',
             'bb_upper','bb_lower','bb_bandwidth','bb_squeeze_recent_10','bb_breakout_after_squeeze',
-            'prior_high_10','prior_high_20'
+            'prior_high_10','prior_high_20','residual_mom_60','residual_mom_120',
+            'beta_market_120','beta_sector_120','rs_sector_60','sector_rs_60',
+            'rs_persistence_count','positive_day_share_60','return_concentration_60',
+            'path_quality_60','near_52w_high'
         ] if c in feat.columns]
         panel = feat[panel_cols].copy()
         panel['is_eligible'] = eligible.astype(bool).values
         panel['valid_cross_section'] = feat['date'].isin(valid_dates).values
-        score_cols = ['date','ticker','leadership_score','short_momentum_score','long_momentum_score','acceleration','rs_score','flow_score','trend_score','sector_score','stage']
+        score_cols = [
+            'date','ticker','leadership_score','real_strength_score',
+            'short_momentum_score','long_momentum_score','acceleration','rs_score',
+            'flow_score','trend_score','sector_score','stage'
+        ]
         panel = panel.merge(scored[score_cols], on=['date','ticker'], how='left')
         try:
             panel.to_parquet(out / 'research_panel.parquet', index=False)
@@ -196,6 +210,9 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             min_leadership_score=float(opp_cfg.get('entry_min_leadership_score', 70)),
             min_short_score=float(opp_cfg.get('entry_min_short_score', 65)),
             min_long_score=float(opp_cfg.get('entry_min_long_score', 70)),
+            min_real_strength_score=float(opp_cfg.get('entry_min_real_strength_score', 0)),
+            min_rs_persistence=int(opp_cfg.get('entry_min_rs_persistence', 0)),
+            require_residual_momentum=bool(opp_cfg.get('entry_require_residual_momentum', False)),
             require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive', True)),
             require_medium_trend=bool(opp_cfg.get('entry_require_medium_trend', True)),
             require_weekly_trend=bool(opp_cfg.get('entry_require_weekly_trend', True)),
@@ -215,6 +232,9 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             min_leadership_score=float(opp_cfg.get('entry_min_leadership_score', 70)),
             min_short_score=float(opp_cfg.get('entry_min_short_score', 65)),
             min_long_score=float(opp_cfg.get('entry_min_long_score', 70)),
+            min_real_strength_score=float(opp_cfg.get('entry_min_real_strength_score', 0)),
+            min_rs_persistence=int(opp_cfg.get('entry_min_rs_persistence', 0)),
+            require_residual_momentum=bool(opp_cfg.get('entry_require_residual_momentum', False)),
             require_macd_positive=bool(opp_cfg.get('entry_require_macd_positive', True)),
             require_medium_trend=bool(opp_cfg.get('entry_require_medium_trend', True)),
             require_weekly_trend=bool(opp_cfg.get('entry_require_weekly_trend', True)),
@@ -282,6 +302,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             sector_history=sector_daily,
             opportunity_cfg=opp_cfg,
             price_history=feat,
+            historical_entry_events=entry_signal_audit,
         )
 
         db = DuckStore(root / 'data' / 'market_flow.duckdb')

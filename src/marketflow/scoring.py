@@ -34,6 +34,13 @@ def build_scores(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     x['short_momentum_score'] = weighted_score(x, w.get('short_momentum', {}))
     x['long_momentum_score'] = weighted_score(x, w.get('long_momentum', {}))
 
+    # V4 challenger: stock-specific strength after market/sector adjustment,
+    # persistence across horizons, smooth return path and 52-week structure.
+    # This score is deliberately separate from legacy rs_score so V3 remains
+    # auditable as a benchmark during validation.
+    real_spec = w.get('real_strength', {})
+    x['real_strength_score'] = weighted_score(x, real_spec) if real_spec else x['rs_score']
+
     sector_cols = ['date', 'sector'] + list(w['sector'].keys())
     sec = x[sector_cols].drop_duplicates(['date', 'sector']).copy()
     sec['sector_score'] = weighted_score(sec, w['sector'])

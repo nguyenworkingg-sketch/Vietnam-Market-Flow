@@ -104,3 +104,42 @@ def test_entry_v3_requires_persistent_htf_strength_and_rejects_chase():
     assert out['ticker'].tolist() == ['AAA']
     assert out.iloc[0]['entry_age_sessions'] == 0
     assert abs(out.iloc[0]['since_entry_pct']) < 1e-9
+
+
+
+def test_entry_v4_requires_residual_strength_not_only_raw_rs():
+    dates = pd.date_range('2026-09-07', periods=10, freq='B')
+    rows = []
+    for ticker, residual in [('GOOD', .08), ('BETA', -.02)]:
+        for i,d in enumerate(dates):
+            close = 30.0 + i*.02
+            if i == 8:
+                close = 30.02
+            if i == 9:
+                close = 30.25
+            rows.append({
+                'date':d,'ticker':ticker,'sector':'Bank','close':close,
+                'sector_score':80,'leadership_score':85,'real_strength_score':82,
+                'short_momentum_score':78,'long_momentum_score':82,
+                'flow_score':80,'trend_score':84,'ret_5':.03,
+                'ma20':30.1,'ma20_distance':close/30.1-1,'ma50':28.5,
+                'macd':.4,'macd_hist':[-.08,-.07,-.06,-.05,-.04,-.03,-.02,-.01,.01,.08][i],
+                'macd_positive':i==9,'volume_ratio_20':1.15,
+                'bb_squeeze_recent_10':False,'bb_breakout_after_squeeze':False,
+                'prior_high_10':31.0,'medium_trend_confirm':True,
+                'weekly_trend_confirm':True,'weekly_ret12':.12,
+                'rs_60':.10,'rs_120':.15,'rs_sector_60':.05,'sector_rs_60':.06,
+                'residual_mom_60':residual,'residual_mom_120':residual,
+                'rs_persistence_count':3,'path_quality_60':.20,
+                'return_concentration_60':.18,'stage':'LEADER',
+            })
+    hist = pd.DataFrame(rows)
+    events = build_entry_signal_history(
+        hist,
+        min_real_strength_score=70,
+        min_rs_persistence=2,
+        require_residual_momentum=True,
+    )
+    assert events['ticker'].tolist() == ['GOOD']
+    assert events.iloc[0]['real_strength_med10'] >= 70
+    assert events.iloc[0]['residual_mom_60'] > 0

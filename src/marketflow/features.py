@@ -65,6 +65,7 @@ def add_stock_features(prices: pd.DataFrame, benchmark: pd.DataFrame) -> pd.Data
     p = prices.copy().sort_values(['ticker', 'date'])
     b = benchmark.copy().sort_values('date')
     b = b[['date', 'close']].rename(columns={'close': 'benchmark_close'})
+    b['benchmark_ret_1'] = b['benchmark_close'].pct_change()
     for w in [5, 20, 60, 120]:
         b[f'benchmark_ret_{w}'] = b['benchmark_close'].pct_change(w)
     p = p.merge(b, on='date', how='left')
@@ -154,7 +155,52 @@ def add_stock_features(prices: pd.DataFrame, benchmark: pd.DataFrame) -> pd.Data
 
 
 def add_sector_features(df: pd.DataFrame) -> pd.DataFrame:
-    x = df.copy()
+    x = df.copy().sort_values(['ticker','date']).reset_index(drop=True)
+
+    # V4 real-strength layer. Market RS alone can confuse systematic market or
+    # industry exposure with stock-specific leadership. We therefore decompose
+    # daily returns into market, sector and idiosyncratic components using only
+    # trailing observations available at each date.
+    x['sector_ret_1'] = x.groupby(['date','sector'])['ret_1'].transform('median')
+    x['sector_excess_ret_1'] = x['sector_ret_1'] - x['benchmark_ret_1']
+
+    def _rolling_beta(g: pd.DataFrame, y: str, z: str, window: int = 120, minp: int = 60):
+        cov = g[y].rolling(window, min_periods=minp).cov(g[z])
+        var = g[z].rolling(window, min_periods=minp).var()
+        return cov / var.replace(0, np.nan)
+
+    pieces = []
+    for _, g in x.groupby('ticker', sort=False):
+        g = g.copy()
+        g['beta_market_120'] = _rolling_beta(g, 'ret_1', 'benchmark_ret_1')
+        g['market_resid_ret_1'] = g['ret_1'] - g['beta_market_120'] * g['benchmark_ret_1']
+        g['beta_sector_120'] = _rolling_beta(g, 'market_resid_ret_1', 'sector_excess_ret_1')
+        g['residual_ret_1'] = (
+            g['market_resid_ret_1']
+            - g['beta_sector_120'] * g['sector_excess_ret_1']
+        )
+        # Sum of daily residuals is used as a robust daily-frequency analogue
+        # of residual momentum; ranking, not the raw magnitude, drives scores.
+        g['residual_mom_60'] = g['residual_ret_1'].rolling(60, min_periods=40).sum()
+        g['residual_mom_120'] = g['residual_ret_1'].rolling(120, min_periods=80).sum()
+
+        # Path quality: reward broad, persistent advances and penalize returns
+        # dominated by a handful of extreme sessions ("frog-in-the-pan" idea).
+        g['positive_day_share_60'] = (g['ret_1'] > 0).rolling(60, min_periods=40).mean()
+        absret = g['ret_1'].abs()
+        g['return_abs_sum_60'] = absret.rolling(60, min_periods=40).sum()
+        g['top5_abs_return_60'] = absret.rolling(60, min_periods=40).apply(
+            lambda a: np.sort(a)[-5:].sum(), raw=True
+        )
+        g['return_concentration_60'] = (
+            g['top5_abs_return_60'] / g['return_abs_sum_60'].replace(0, np.nan)
+        )
+        g['path_quality_60'] = (
+            g['positive_day_share_60'] - g['return_concentration_60']
+        )
+        pieces.append(g)
+    x = pd.concat(pieces, ignore_index=True) if pieces else x
+
     for w in [20, 60]:
         sec_med = x.groupby(['date', 'sector'])[f'ret_{w}'].transform('median')
         x[f'sector_ret_{w}'] = sec_med
@@ -171,4 +217,10 @@ def add_sector_features(df: pd.DataFrame) -> pd.DataFrame:
     x = x.merge(sec[['date', 'sector', 'sector_value_ratio_20']], on=['date', 'sector'], how='left')
     x['sector_rs_20'] = x['sector_ret_20'] - x['benchmark_ret_20']
     x['sector_rs_60'] = x['sector_ret_60'] - x['benchmark_ret_60']
+
+    # Cross-sectional multi-horizon persistence. A high score requires strength
+    # to survive beyond one arbitrary lookback window.
+    rs_cols = [col for col in ['rs_20','rs_60','rs_120'] if col in x.columns]
+    x['rs_persistence_count'] = sum((x[col] > 0).astype(int) for col in rs_cols)
+    x['near_52w_high'] = x['high_252_proximity'].clip(lower=0, upper=1.05)
     return x.drop(columns=['_above_ma20', '_above_ma50'])
