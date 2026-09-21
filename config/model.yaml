@@ -22,6 +22,16 @@ weights:
     rs_20: 0.30
     rs_60: 0.35
     rs_sector_20: 0.20
+  # V4 challenger grounded in residual/industry/path-quality momentum research.
+  # These are starting research weights; production trust comes from OOS tests,
+  # not from treating the weights as academic constants.
+  real_strength:
+    residual_mom_60: 0.25
+    residual_mom_120: 0.15
+    rs_sector_60: 0.20
+    rs_persistence_count: 0.15
+    path_quality_60: 0.15
+    near_52w_high: 0.10
   flow:
     value_ratio_20: 0.35
     volume_ratio_20: 0.25
@@ -67,12 +77,15 @@ opportunities:
   min_sector_score: 50
   portfolio_size: 10
   portfolio_sector_cap: 2
-  entry_model_version: v3-real-strength-2026-09-20
+  entry_model_version: v4-residual-strength-2026-09-21
   entry_top_n: 3
   entry_min_sector_score: 55
   entry_min_leadership_score: 70
   entry_min_short_score: 65
   entry_min_long_score: 70
+  entry_min_real_strength_score: 70
+  entry_min_rs_persistence: 2
+  entry_require_residual_momentum: true
   entry_require_macd_positive: true
   entry_require_medium_trend: true
   entry_require_weekly_trend: true
