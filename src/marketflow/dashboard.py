@@ -307,6 +307,7 @@ def _stock_chart_explorer(
     latest: pd.DataFrame,
     default_ticker: str | None = None,
     days: int = 252,
+    position_lifecycle: pd.DataFrame | None = None,
 ) -> str:
     if price_history is None or price_history.empty:
         return "<div class='empty'>Chưa có dữ liệu giá cho Stock Chart Explorer.</div>"
@@ -332,6 +333,14 @@ def _stock_chart_explorer(
             return None
         try:
             return round(float(v), digits)
+        except Exception:
+            return None
+
+    def date_text(v):
+        if v is None or pd.isna(v):
+            return None
+        try:
+            return pd.Timestamp(v).strftime('%Y-%m-%d')
         except Exception:
             return None
 
@@ -363,7 +372,32 @@ def _stock_chart_explorer(
                     str(r.get('entry_reason','Entry')),
                     str(r.get('model_version','')),
                 ]
-                for _,r in g.tail(6).iterrows()
+                for _,r in g.tail(8).iterrows()
+            ]
+
+    life_payload = {ticker: [] for ticker in tickers}
+    if position_lifecycle is not None and not position_lifecycle.empty:
+        life = position_lifecycle.copy()
+        life['signal_date'] = pd.to_datetime(life['signal_date'])
+        cutoff = p['date'].min()
+        life = life[life['signal_date'].ge(cutoff)]
+        for ticker,g in life[life['ticker'].astype(str).isin(tickers)].groupby('ticker'):
+            life_payload[str(ticker)] = [
+                [
+                    date_text(r.get('signal_date')),
+                    str(r.get('model_version','')),
+                    date_text(r.get('fill_date')),
+                    clean(r.get('fill_price')),
+                    str(r.get('status','')),
+                    str(r.get('action','')),
+                    date_text(r.get('exit_date')),
+                    clean(r.get('exit_price')),
+                    str(r.get('exit_reason','')),
+                    clean(r.get('lifecycle_return')),
+                    clean(r.get('no_stop_return')),
+                    clean(r.get('protective_stop')),
+                ]
+                for _,r in g.tail(8).iterrows()
             ]
 
     current = {}
@@ -386,6 +420,7 @@ def _stock_chart_explorer(
     )
     data_json = json.dumps(payload, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
     sig_json = json.dumps(sig_payload, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
+    life_json = json.dumps(life_payload, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
     cur_json = json.dumps(current, ensure_ascii=False, separators=(',',':')).replace('</','<\\/')
 
     return f"""
@@ -399,11 +434,13 @@ def _stock_chart_explorer(
     <div class='canvas-wrap'><canvas id='stock-chart-canvas' height='700'></canvas></div>
     <script type='application/json' id='stock-chart-data'>{data_json}</script>
     <script type='application/json' id='stock-signal-data'>{sig_json}</script>
+    <script type='application/json' id='stock-life-data'>{life_json}</script>
     <script type='application/json' id='stock-current-data'>{cur_json}</script>
     <script>
     (() => {{
       const DATA=JSON.parse(document.getElementById('stock-chart-data').textContent);
       const SIG=JSON.parse(document.getElementById('stock-signal-data').textContent);
+      const LIFE=JSON.parse(document.getElementById('stock-life-data').textContent);
       const CUR=JSON.parse(document.getElementById('stock-current-data').textContent);
       const select=document.getElementById('stock-chart-select');
       const rangeSelect=document.getElementById('stock-chart-range');
@@ -421,6 +458,13 @@ def _stock_chart_explorer(
         ctx.stroke(); ctx.restore();
       }}
       function fmt(v,d=1){{return Number.isFinite(v)?v.toFixed(d):'—';}}
+      function pct(v){{return Number.isFinite(v)?((v*100>=0?'+':'')+(v*100).toFixed(1)+'%'):'—';}}
+      function modelTag(version) {{
+        if((version||'').startsWith('v4-')) return 'V4';
+        if((version||'').startsWith('v3-')) return 'V3 AUDIT';
+        if((version||'').startsWith('v2-')) return 'V2 AUDIT';
+        return 'HIST AUDIT';
+      }}
       function draw(ticker) {{
         const allRows=DATA[ticker]||[]; if(!allRows.length)return;
         const rangeN=parseInt(rangeSelect.value||'126',10);
@@ -481,25 +525,50 @@ def _stock_chart_explorer(
 
         const dateIndex=Object.fromEntries(rows.map((r,i)=>[r[0],i]));
         const allEvents=SIG[ticker]||[];
+        const lifeRows=LIFE[ticker]||[];
+        const lifeMap=Object.fromEntries(lifeRows.map(x=>[x[0]+'|'+x[1],x]));
         const events=allEvents.filter(e=>dateIndex[e[0]]!==undefined);
+
         events.forEach((e,k)=>{{
           const idx=dateIndex[e[0]],x=sx(idx),y=sy(e[1]);
           const currentModel=(e[4]||'').startsWith('v4-');
           const marker=currentModel?'#45d483':'#f2bf55';
-          const labelY=PT+14+(k%2)*13;
+          const labelY=PT+14+(k%3)*13;
           ctx.strokeStyle=currentModel?'rgba(69,212,131,.55)':'rgba(242,191,85,.48)';ctx.setLineDash([3,5]);
-          ctx.beginPath();ctx.moveTo(x,PT+26);ctx.lineTo(x,y-6);ctx.stroke();ctx.setLineDash([]);
+          ctx.beginPath();ctx.moveTo(x,PT+30);ctx.lineTo(x,y-6);ctx.stroke();ctx.setLineDash([]);
           ctx.fillStyle=marker;ctx.beginPath();ctx.moveTo(x,y-1);ctx.lineTo(x-5,y-9);ctx.lineTo(x+5,y-9);ctx.closePath();ctx.fill();
           ctx.fillStyle=currentModel?'#9ef0bd':'#f6d991';ctx.font='700 9px system-ui';ctx.textAlign='center';
-          ctx.fillText((currentModel?'ENTRY V4 ':'LEGACY ')+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
+          ctx.fillText(modelTag(e[4])+' '+e[0].slice(8,10)+'/'+e[0].slice(5,7),x,labelY);
           ctx.textAlign='left';
+
+          const life=lifeMap[e[0]+'|'+e[4]];
+          if(!life) return;
+          const fillDate=life[2],fillPrice=life[3],status=life[4],exitDate=life[6],exitPrice=life[7],exitReason=life[8],lifeRet=life[9],stop=life[11];
+          const fillIdx=dateIndex[fillDate];
+          if(fillIdx===undefined || !Number.isFinite(fillPrice)) return;
+          const endIdx=(exitDate && dateIndex[exitDate]!==undefined)?dateIndex[exitDate]:rows.length-1;
+          const yFill=sy(fillPrice);
+          ctx.strokeStyle=status==='CLOSED'?'rgba(240,116,139,.75)':'rgba(69,212,131,.72)';
+          ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(fillIdx),yFill);ctx.lineTo(sx(endIdx),yFill);ctx.stroke();ctx.setLineDash([]);
+
+          if(status==='CLOSED' && exitDate && dateIndex[exitDate]!==undefined && Number.isFinite(exitPrice)) {{
+            const ex=dateIndex[exitDate],xx=sx(ex),yy=sy(exitPrice);
+            ctx.strokeStyle='#f0748b';ctx.lineWidth=2;
+            ctx.beginPath();ctx.moveTo(xx-5,yy-5);ctx.lineTo(xx+5,yy+5);ctx.moveTo(xx+5,yy-5);ctx.lineTo(xx-5,yy+5);ctx.stroke();
+            ctx.fillStyle='#f1919e';ctx.font='700 10px system-ui';ctx.textAlign='center';
+            const lbl=(exitReason||'EXIT').startsWith('HARD_STOP')?'CUT ':'EXIT ';
+            ctx.fillText(lbl+pct(lifeRet)+' '+exitDate.slice(8,10)+'/'+exitDate.slice(5,7),xx,Math.max(PT+12,yy-10));
+            ctx.textAlign='left';
+          }} else {{
+            if(Number.isFinite(stop)) {{
+              const ys=sy(stop);ctx.strokeStyle='rgba(240,116,139,.55)';ctx.setLineDash([3,4]);
+              ctx.beginPath();ctx.moveTo(sx(fillIdx),ys);ctx.lineTo(sx(rows.length-1),ys);ctx.stroke();ctx.setLineDash([]);
+              ctx.fillStyle='#f1919e';ctx.font='700 9px system-ui';ctx.fillText('STOP '+fmt(stop,2),Math.max(L,sx(rows.length-1)-70),ys-5);
+            }}
+            ctx.fillStyle='#83e7aa';ctx.font='700 10px system-ui';
+            ctx.fillText((status==='EXIT_NEXT_OPEN'?'EXIT NEXT OPEN ':'OPEN ')+pct(lifeRet),Math.max(L,sx(rows.length-1)-110),yFill-7);
+          }}
         }});
-        if(events.length) {{
-          const e=events[events.length-1],idx=dateIndex[e[0]],ep=e[1],y=sy(ep),last=rows[rows.length-1][4],perf=last/ep-1;
-          const currentModel=(e[4]||'').startsWith('v4-');
-          ctx.strokeStyle=currentModel?'#45d483':'#f2bf55';ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(sx(idx),y);ctx.lineTo(sx(rows.length-1),y);ctx.stroke();ctx.setLineDash([]);
-          ctx.fillStyle=perf>=0?'#83e7aa':'#f1919e';ctx.font='700 11px system-ui';ctx.fillText('Từ entry '+(perf*100>=0?'+':'')+(perf*100).toFixed(1)+'%',Math.max(L,sx(rows.length-1)-105),y-7);
-        }}
 
         const ticks=[0,.2,.4,.6,.8,1];
         ctx.fillStyle='#93a6c0';ctx.font='10px system-ui';
@@ -507,14 +576,26 @@ def _stock_chart_explorer(
         const meta=CUR[ticker]||{{}};
         const ev=events.length?events[events.length-1]:null;
         const lastAll=allEvents.length?allEvents[allEvents.length-1]:null;
-        const last=rows[rows.length-1][4];
         let s=(meta.sector||'')+' · Leadership '+fmt(meta.leadership)+' · SM NH '+fmt(meta.short)+' · SM DH '+fmt(meta.long);
         if(ev) {{
-          const tag=(ev[4]||'').startsWith('v4-')?'V4':'Legacy';
-          s+=' · '+tag+' entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
+          const tag=modelTag(ev[4]);
+          const life=lifeMap[ev[0]+'|'+ev[4]];
+          s+=' · '+tag+' signal '+ev[0]+' @ '+fmt(ev[1]);
+          if(life) {{
+            if(life[4]==='CLOSED') {{
+              s+=' · risk replay: '+((life[8]||'EXIT').startsWith('HARD_STOP')?'CUT LOSS':'EXIT')+' '+life[6]+' @ '+fmt(life[7])+' · P/L '+pct(life[9]);
+            }} else {{
+              s+=' · '+life[4]+' / '+life[5]+' · P/L '+pct(life[9]);
+              if(Number.isFinite(life[11])) s+=' · stop '+fmt(life[11],2);
+            }}
+          }} else if(!(ev[4]||'').startsWith('v4-')) {{
+            s+=' · chỉ là tín hiệu lịch sử, không phải vị thế đang mở';
+          }}
         }} else if(lastAll) {{
-          const tag=(lastAll[4]||'').startsWith('v4-')?'V4':'Legacy';
-          s+=' · Không có entry trong '+(rangeN===126?'6M':'12M')+' · gần nhất '+tag+' '+lastAll[0]+' @ '+fmt(lastAll[1]);
+          const tag=modelTag(lastAll[4]);
+          const life=lifeMap[lastAll[0]+'|'+lastAll[4]];
+          s+=' · Không có signal trong '+(rangeN===126?'6M':'12M')+' · gần nhất '+tag+' '+lastAll[0];
+          if(life && life[4]==='CLOSED') s+=' · đã '+((life[8]||'').startsWith('HARD_STOP')?'CUT LOSS':'EXIT')+' '+life[6]+' · P/L '+pct(life[9]);
         }} else {{
           s+=' · Chưa từng có entry signal được lưu';
         }}
@@ -1114,9 +1195,16 @@ def render_dashboard(
         if historical_entry_events is not None
         else entry_signal_history
     )
+    explorer_lifecycle = simulate_position_lifecycle(
+        price_history if price_history is not None else pd.DataFrame(),
+        score_history,
+        explorer_events,
+        risk_cfg,
+    )
     stock_explorer_html=_stock_chart_explorer(
         price_history, explorer_events, latest,
         default_ticker=default_chart_ticker, days=252,
+        position_lifecycle=explorer_lifecycle,
     )
 
     css = """
@@ -1190,7 +1278,7 @@ def render_dashboard(
 
     <div class='panel section' id='chart-explorer'>
       <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6M / 12M · Versioned history</span></div>
-      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V4 hiện tại hiển thị màu xanh; tín hiệu từ V2/V3 cũ được giữ lại dưới dạng Legacy màu vàng để audit, không được xem là tín hiệu hiện hành.</div>
+      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V4 hiện tại hiển thị màu xanh. V2/V3 màu vàng là <b>tín hiệu lịch sử để audit</b>, không phải vị thế còn mở. Mỗi tín hiệu lịch sử được replay theo rule quản trị rủi ro hiện tại: fill T+1, hard stop/cut loss, trailing profit và strength-break exit; chart sẽ đánh dấu điểm CUT/EXIT thay vì kéo P/L từ entry tới giá hiện tại.</div>
       {stock_explorer_html}
     </div>
 
