@@ -432,6 +432,10 @@ def _stock_chart_explorer(
       <span id='stock-chart-summary' class='chart-meta'></span>
     </div>
     <div class='canvas-wrap'><canvas id='stock-chart-canvas' height='700'></canvas></div>
+    <div class='explorer-history-block'>
+      <div class='section-head explorer-history-head'><div><div class='section-kicker'>Entry & risk history</div><h3 style='margin:2px 0 0'>Lịch sử tín hiệu / vị thế của mã đang chọn</h3></div><span class='tag' id='stock-history-count'></span></div>
+      <div id='stock-history-table' class='table-wrap explorer-history-table'></div>
+    </div>
     <script type='application/json' id='stock-chart-data'>{data_json}</script>
     <script type='application/json' id='stock-signal-data'>{sig_json}</script>
     <script type='application/json' id='stock-life-data'>{life_json}</script>
@@ -446,6 +450,8 @@ def _stock_chart_explorer(
       const rangeSelect=document.getElementById('stock-chart-range');
       const canvas=document.getElementById('stock-chart-canvas');
       const summary=document.getElementById('stock-chart-summary');
+      const historyTable=document.getElementById('stock-history-table');
+      const historyCount=document.getElementById('stock-history-count');
       const ctx=canvas.getContext('2d');
 
       function line(points,color,width=1,dash=[]) {{
@@ -464,6 +470,64 @@ def _stock_chart_explorer(
         if((version||'').startsWith('v3-')) return 'V3 AUDIT';
         if((version||'').startsWith('v2-')) return 'V2 AUDIT';
         return 'HIST AUDIT';
+      }}
+      function esc(v) {{
+        return String(v==null?'':v).replace(/[&<>"']/g,ch=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[ch]));
+      }}
+      function shortDate(v) {{
+        if(!v) return '—';
+        const p=String(v).split('-'); return p.length===3 ? p[2]+'/'+p[1]+'/'+p[0] : esc(v);
+      }}
+      function renderHistory(ticker, visibleRows) {{
+        const allEvents=SIG[ticker]||[];
+        const lives=LIFE[ticker]||[];
+        const lifeMap=Object.fromEntries(lives.map(x=>[x[0]+'|'+x[1],x]));
+        const startDate=visibleRows.length?visibleRows[0][0]:'0000-00-00';
+        const endDate=visibleRows.length?visibleRows[visibleRows.length-1][0]:'9999-99-99';
+        const events=allEvents.filter(e=>e[0]>=startDate && e[0]<=endDate).slice().sort((a,b)=>b[0].localeCompare(a[0]));
+        historyCount.textContent=events.length+' signal'+(events.length===1?'':'s')+' trong range';
+        if(!events.length) {{
+          historyTable.innerHTML="<div class='empty'>Không có entry signal trong range đang chọn.</div>";
+          return;
+        }}
+        let body='';
+        for(const e of events) {{
+          const life=lifeMap[e[0]+'|'+e[4]];
+          const model=modelTag(e[4]);
+          const isCurrent=(e[4]||'').startsWith('v4-');
+          let status='AUDIT ONLY',action='—',fillDate='—',fillPrice='—',exitDate='—',exitPrice='—',rulePL='—',noStop='—',stop='—',exitReason='—';
+          let lifeRet=null;
+          if(life) {{
+            fillDate=shortDate(life[2]); fillPrice=fmt(life[3],2);
+            status=life[4]||'—'; action=life[5]||'—';
+            exitDate=shortDate(life[6]); exitPrice=fmt(life[7],2);
+            exitReason=life[8]||'—'; lifeRet=life[9]; rulePL=pct(life[9]); noStop=pct(life[10]); stop=fmt(life[11],2);
+          }}
+          const statusCls=status==='CLOSED'?'hist-closed':(status==='OPEN'?'hist-open':(status==='EXIT_NEXT_OPEN'?'hist-exit':''));
+          body+='<tr>'+
+            '<td>'+esc(shortDate(e[0]))+'</td>'+
+            '<td><span class="hist-model '+(isCurrent?'hist-v4':'hist-audit')+'">'+esc(model)+'</span></td>'+
+            '<td>'+esc(e[3]||'')+'</td>'+
+            '<td>'+fmt(e[1],2)+'</td>'+
+            '<td>'+esc(fillDate)+'</td>'+
+            '<td>'+esc(fillPrice)+'</td>'+
+            '<td class="'+statusCls+'"><b>'+esc(status)+'</b></td>'+
+            '<td>'+esc(action)+'</td>'+
+            '<td>'+esc(exitDate)+'</td>'+
+            '<td>'+esc(exitPrice)+'</td>'+
+            '<td class="'+(Number(lifeRet)>=0?'hist-pos':'hist-neg')+'"><b>'+esc(rulePL)+'</b></td>'+
+            '<td>'+esc(noStop)+'</td>'+
+            '<td>'+esc(stop)+'</td>'+
+            '<td>'+esc(exitReason)+'</td>'+
+          '</tr>';
+        }}
+        historyTable.innerHTML='<table class="data explorer-history-data">'+
+          '<thead><tr>'+
+            '<th>Signal</th><th>Model</th><th>Trigger</th><th>Signal px</th>'+
+            '<th>Fill T+1</th><th>Fill px</th><th>Status</th><th>Action</th>'+
+            '<th>Exit</th><th>Exit px</th><th>P/L rule</th><th>P/L nếu giữ</th>'+
+            '<th>Stop</th><th>Lý do exit</th>'+
+          '</tr></thead><tbody>'+body+'</tbody></table>';
       }}
       function draw(ticker) {{
         const allRows=DATA[ticker]||[]; if(!allRows.length)return;
@@ -600,6 +664,7 @@ def _stock_chart_explorer(
           s+=' · Chưa từng có entry signal được lưu';
         }}
         summary.textContent=s;
+        renderHistory(ticker, rows);
       }}
       select.addEventListener('change',()=>draw(select.value));
       rangeSelect.addEventListener('change',()=>draw(select.value));
@@ -1231,7 +1296,7 @@ def render_dashboard(
     table.data{width:100%;border-collapse:collapse;font-size:12px}table.data th,table.data td{padding:8px 8px;border-bottom:1px solid rgba(32,49,76,.66);text-align:right;white-space:nowrap}table.data th:first-child,table.data td:first-child,table.data th:nth-child(2),table.data td:nth-child(2){text-align:left}table.data th{color:#91a5c2;font-weight:650;background:rgba(255,255,255,.014);position:sticky;top:0}.table-wrap{overflow:auto;max-height:515px}
     .mini-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.mini-card{padding:13px}.mini-title{font-size:13px;font-weight:750;margin-bottom:9px}.mini-grid{display:grid;grid-template-columns:1fr auto;gap:5px 10px;font-size:11px;color:var(--muted)}.mini-grid b{color:#e5eefc;font-variant-numeric:tabular-nums}
     .readout{margin:0;padding-left:18px;color:#c8d5e8;font-size:13px;line-height:1.65}.readout b{color:white}.disclaimer{margin-top:20px;padding:14px 16px;border:1px solid #2d3d58;background:#0a1423;border-radius:11px;font-size:11px;color:#8da0bc;line-height:1.55}
-    .stock-explorer-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.stock-explorer-controls label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.stock-explorer-controls select{min-width:260px;max-width:520px;background:#0a1525;color:#e9f2ff;border:1px solid #2a405f;border-radius:8px;padding:8px 10px;font:inherit}.canvas-wrap{width:100%;overflow:auto;background:#07111f;border:1px solid #20314c;border-radius:10px;padding:6px}.canvas-wrap canvas{display:block;min-width:900px}
+    .stock-explorer-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.explorer-history-block{margin-top:14px;padding-top:12px;border-top:1px solid rgba(32,49,76,.72)}.explorer-history-head{margin-bottom:8px}.explorer-history-table{max-height:360px;border:1px solid #20314c;border-radius:9px;background:#091321}.explorer-history-data th,.explorer-history-data td{font-variant-numeric:tabular-nums}.explorer-history-data td:nth-child(3),.explorer-history-data td:nth-child(14){text-align:left;max-width:260px;overflow:hidden;text-overflow:ellipsis}.hist-model{display:inline-block;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:700}.hist-v4{color:#9ef0bd;background:rgba(69,212,131,.10);border:1px solid rgba(69,212,131,.28)}.hist-audit{color:#f6d991;background:rgba(242,191,85,.08);border:1px solid rgba(242,191,85,.25)}.hist-open,.hist-pos{color:#83e7aa}.hist-closed,.hist-neg{color:#f1919e}.hist-exit{color:#f6d991}.stock-explorer-controls label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}.stock-explorer-controls select{min-width:260px;max-width:520px;background:#0a1525;color:#e9f2ff;border:1px solid #2a405f;border-radius:8px;padding:8px 10px;font:inherit}.canvas-wrap{width:100%;overflow:auto;background:#07111f;border:1px solid #20314c;border-radius:10px;padding:6px}.canvas-wrap canvas{display:block;min-width:900px}
     .entry-panel{margin-top:16px;border:1px solid #3b745f;background:linear-gradient(180deg,rgba(19,48,42,.62),rgba(11,26,36,.98));box-shadow:0 16px 42px rgba(0,0,0,.22)}.entry-panel h2{font-size:19px}.entry-rule{display:flex;gap:7px;flex-wrap:wrap;margin:8px 0 12px}.rule-pill{font-size:10px;border:1px solid #315a4d;background:rgba(69,212,131,.07);color:#bdebd0;border-radius:999px;padding:5px 8px}.price-chart-detail{margin-top:10px;border:1px solid #243854;border-radius:10px;background:#081321;overflow:hidden}.price-chart-detail summary{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 12px;border:0;background:#0b1728}.chart-meta{font-size:11px;color:var(--muted);font-weight:500}.terminal-chart-wrap{padding:8px;background:#07111f;overflow:auto}.candle-chart{min-width:980px;background:#07111f;border-radius:8px}.terminal-bg{fill:#07111f}.terminal-grid{stroke:#1a2a40;stroke-width:1;opacity:.72}.terminal-axis,.terminal-label{fill:#93a6c0;font-size:10px}.terminal-label{fill:#c2cee0;font-weight:650}.panel-sep{stroke:#263a55}.candle-up{fill:#18a999;stroke:#18a999;stroke-width:1}.candle-down{fill:#ef4d61;stroke:#ef4d61;stroke-width:1}.vol-up{fill:#16796f;opacity:.75}.vol-down{fill:#a73d4b;opacity:.72}.ma20-line{fill:none;stroke:#45d483;stroke-width:1.6}.ma50-line{fill:none;stroke:#f2bf55;stroke-width:1.5}.bb-line{fill:none;stroke:#7186a5;stroke-width:1;stroke-dasharray:3 4;opacity:.65}.last-price-line{stroke:#20b8a8;stroke-width:1;stroke-dasharray:2 3;opacity:.65}.last-price-box{fill:#148f84}.last-price-text{fill:white;font-size:10px;font-weight:700}.entry-guide{stroke:#45d483;stroke-width:1.2;stroke-dasharray:4 4;opacity:.85}.entry-guide-top{stroke:#45d483;stroke-width:1;stroke-dasharray:3 5;opacity:.55}.entry-arrow{fill:#45d483}.entry-top-label{fill:#9ef0bd;font-size:9px;font-weight:800;letter-spacing:.03em;paint-order:stroke;stroke:#07111f;stroke-width:3px}.entry-price-line{stroke:#45d483;stroke-width:1.2;stroke-dasharray:6 4;opacity:.72}.entry-perf-pos{fill:#83e7aa;font-size:10px;font-weight:750}.entry-perf-neg{fill:#f1919e;font-size:10px;font-weight:750}.macd-zero{stroke:#40516d;stroke-width:1}.macd-bar-pos{fill:#61d4c7;opacity:.9}.macd-bar-neg{fill:#f16978;opacity:.9}.macd-line{fill:none;stroke:#3da5ff;stroke-width:1.7}.signal-line{fill:none;stroke:#ff8a3d;stroke-width:1.7}.legend-ma20{fill:#45d483;font-size:10px}.legend-ma50{fill:#f2bf55;font-size:10px}.legend-bb{fill:#91a5c2;font-size:10px}
     .opportunity-shell{border:1px solid #34506f;background:linear-gradient(180deg,rgba(16,37,57,.98),rgba(10,23,39,.98));box-shadow:0 0 0 1px rgba(84,215,239,.05),0 18px 44px rgba(0,0,0,.18)}.opportunity-shell.has-alert{border-color:#3f856c;box-shadow:0 0 0 1px rgba(69,212,131,.10),0 18px 44px rgba(0,0,0,.20)}.opportunity-title{display:flex;align-items:center;gap:9px}.pulse-dot{width:9px;height:9px;border-radius:50%;background:#66778f}.has-alert .pulse-dot{background:var(--green);box-shadow:0 0 0 5px rgba(69,212,131,.10)}.count-badge{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:22px;border-radius:999px;padding:0 7px;background:#142943;border:1px solid #2f4c70;color:#dcecff;font-size:11px;font-weight:750}.has-alert .count-badge{background:rgba(69,212,131,.10);border-color:#34745e;color:#8ff0b5}.opp-col{min-width:0}.opp-label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:12px;font-weight:750}.opp-threshold{font-size:10px;color:var(--muted);font-weight:500}.portfolio-note{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 12px}.portfolio-pill{border:1px solid #2b405f;background:#0b1728;border-radius:9px;padding:8px 10px;font-size:11px;color:#aebdd2}.portfolio-pill b{display:block;color:#eef5ff;font-size:13px;margin-top:2px}
     details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;color:#aebdd2;font-size:12px}.method{font-size:12px;color:var(--muted);line-height:1.6}
