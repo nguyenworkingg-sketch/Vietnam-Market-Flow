@@ -158,6 +158,10 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert 'Risk / Exit' in text
     assert "id='stock-chart-select'" in text
     assert "id='stock-chart-range'" in text
+    assert "id='stock-history-table'" in text
+    assert "id='stock-history-count'" in text
+    assert 'Lịch sử tín hiệu / vị thế của mã đang chọn' in text
+    assert 'P/L nếu giữ' in text
     assert '12 tháng' in text
     assert 'v2-causal-2026-09-20' in text
     assert "id='stock-life-data'" in text
