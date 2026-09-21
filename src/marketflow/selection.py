@@ -520,3 +520,80 @@ def build_entry_candidates(
         'stage_current':'stage',
     })
     return out
+
+
+
+def build_entry_watchlist(
+    scored_history: pd.DataFrame,
+    top_n: int = 3,
+    min_sector_score: float = 55.0,
+    min_leadership_score: float = 70.0,
+    min_short_score: float = 65.0,
+    min_long_score: float = 70.0,
+    min_real_strength_score: float = 70.0,
+    min_rs_persistence: int = 2,
+    require_residual_momentum: bool = True,
+    require_medium_trend: bool = True,
+    require_weekly_trend: bool = True,
+    max_ma20_distance: float = 0.08,
+    max_ret5: float = 0.10,
+) -> pd.DataFrame:
+    """Rank near-entry names without weakening or pretending to pass entry gates."""
+    if scored_history is None or scored_history.empty or top_n <= 0:
+        return pd.DataFrame()
+    x = scored_history.copy()
+    x['date'] = pd.to_datetime(x['date']).dt.normalize()
+    x = x.sort_values(['ticker','date']).reset_index(drop=True)
+    g = x.groupby('ticker', group_keys=False)
+    for src, dst in [
+        ('leadership_score','leadership_med10'),('long_momentum_score','long_med10'),
+        ('sector_score','sector_med10'),('real_strength_score','real_strength_med10')
+    ]:
+        if src not in x.columns: x[src] = np.nan
+        x[dst] = g[src].transform(lambda s: s.rolling(10, min_periods=5).median())
+    latest = x[x['date'].eq(x['date'].max())].copy()
+
+    def fail(row):
+        failures=[]
+        checks=[
+            (row.get('leadership_med10',np.nan) >= min_leadership_score, 'Leadership 10P'),
+            (row.get('long_med10',np.nan) >= min_long_score, 'Long momentum 10P'),
+            (row.get('sector_med10',np.nan) >= min_sector_score, 'Sector 10P'),
+            (row.get('short_momentum_score',np.nan) >= min_short_score, 'Short momentum'),
+            (row.get('real_strength_med10',np.nan) >= min_real_strength_score, 'Real Strength 10P'),
+            (row.get('rs_60',np.nan) > 0, 'RS60 vs market'),
+            (row.get('rs_120',np.nan) > 0, 'RS120 vs market'),
+            (row.get('rs_sector_60',np.nan) > 0, 'RS60 vs sector'),
+            (row.get('sector_rs_60',np.nan) > 0, 'Sector vs market'),
+            (row.get('rs_persistence_count',0) >= min_rs_persistence, 'RS persistence'),
+        ]
+        if require_residual_momentum:
+            checks += [(row.get('residual_mom_60',np.nan)>0,'Residual 60P'),
+                       (row.get('residual_mom_120',np.nan)>0,'Residual 120P')]
+        if require_medium_trend: checks.append((bool(row.get('medium_trend_confirm',False)),'Daily trend'))
+        if require_weekly_trend: checks.append((bool(row.get('weekly_trend_confirm',False)),'Weekly trend'))
+        checks += [(row.get('ma20_distance',np.nan) <= max_ma20_distance,'MA20 extension'),
+                   (row.get('ret_5',np.nan) <= max_ret5,'5D extension')]
+        for ok,label in checks:
+            if not bool(ok): failures.append(label)
+        return failures
+
+    latest['_failures'] = latest.apply(fail, axis=1)
+    latest['gate_fail_count'] = latest['_failures'].map(len)
+    latest['gate_failures'] = latest['_failures'].map(lambda z: ' · '.join(z[:4]) + (' …' if len(z)>4 else ''))
+    latest['watch_score'] = (
+        pd.to_numeric(latest['real_strength_med10'],errors='coerce').fillna(0)*.30
+        + pd.to_numeric(latest['leadership_med10'],errors='coerce').fillna(0)*.25
+        + pd.to_numeric(latest['long_med10'],errors='coerce').fillna(0)*.20
+        + pd.to_numeric(latest['sector_med10'],errors='coerce').fillna(0)*.15
+        + pd.to_numeric(latest['short_momentum_score'],errors='coerce').fillna(0)*.10
+        - latest['gate_fail_count']*5
+    )
+    latest['status'] = np.where(latest['gate_fail_count'].le(2),'NEAR ENTRY','WATCHLIST')
+    out = latest.sort_values(['gate_fail_count','watch_score'],ascending=[True,False]).head(top_n).copy()
+    out['watch_rank'] = range(1,len(out)+1)
+    cols=['watch_rank','ticker','sector','status','watch_score','gate_fail_count','gate_failures',
+          'close','real_strength_med10','leadership_med10','long_med10','sector_med10',
+          'short_momentum_score','residual_mom_60','residual_mom_120','rs_persistence_count',
+          'ma20_distance','ret_5','stage']
+    return out[[z for z in cols if z in out.columns]].reset_index(drop=True)
