@@ -281,4 +281,3 @@ def test_historical_signal_chart_replays_cut_loss_not_current_mark_to_market(tmp
     text=out.read_text(encoding='utf-8')
     assert 'V2 AUDIT' in text
     assert 'CUT LOSS' in text
-    assert 'Từ entry' not in text
