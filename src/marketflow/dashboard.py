@@ -77,6 +77,9 @@ DISPLAY = {
     'trail_pct_current': 'Trail % hiện tại',
     'atr_pct_20': 'ATR20 %',
     'atr_regime_ratio': 'ATR regime',
+    'entry_pullback_band': 'Pullback band %',
+    'entry_local_ma20_cap': 'MA20 cap %',
+    'entry_local_ret5_cap': '5D cap %',
 }
 
 STAGE_VI = {
@@ -103,7 +106,7 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
     if d.empty:
         return "<div class='empty'>Chưa có dữ liệu phù hợp.</div>"
     for c in d.select_dtypes(include='number').columns:
-        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak','atr_pct_at_entry','adaptive_stop_pct','profit_arm_pct_used','profit_floor_pct_used','trail_pct_current','atr_pct_20'}:
+        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak','atr_pct_at_entry','adaptive_stop_pct','profit_arm_pct_used','profit_floor_pct_used','trail_pct_current','atr_pct_20','entry_pullback_band','entry_local_ma20_cap','entry_local_ret5_cap'}:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{100*v:+.1f}%')
         else:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
@@ -1224,7 +1227,8 @@ def render_dashboard(
             ['entry_rank','ticker','sector','entry_date','entry_price','current_price',
              'since_entry_pct','entry_age_sessions','entry_reason','entry_score_current',
              'real_strength_med10','residual_mom_60','residual_mom_120',
-             'rs_persistence_count','path_quality_60','atr_pct_20','atr_regime_ratio','stage'],
+             'rs_persistence_count','path_quality_60','atr_pct_20','atr_regime_ratio',
+             'entry_local_ma20_cap','entry_local_ret5_cap','stage'],
             3,
         )
         entry_chart_html = _candidate_charts(
