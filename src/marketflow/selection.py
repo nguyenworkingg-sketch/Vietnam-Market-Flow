@@ -383,6 +383,9 @@ def build_entry_signal_history(
         'Pullback resume + HTF confirm',
     )
     e['entry_price'] = pd.to_numeric(e['close'], errors='coerce')
+    e['entry_pullback_band'] = e['_pullback_band']
+    e['entry_local_ma20_cap'] = e['_local_ma20_cap']
+    e['entry_local_ret5_cap'] = e['_local_ret5_cap']
     e = e.rename(columns={'date':'entry_date'})
     cols = [
         'entry_date','ticker','sector','entry_price','entry_score','entry_reason',
@@ -392,7 +395,7 @@ def build_entry_signal_history(
         'rs_60','rs_120','rs_sector_60','sector_rs_60',
         'weekly_ret12','medium_trend_confirm','weekly_trend_confirm',
         'ret_5','ma20_distance','atr_pct_20','atr_regime_ratio',
-        '_pullback_band','_local_ma20_cap','_local_ret5_cap',
+        'entry_pullback_band','entry_local_ma20_cap','entry_local_ret5_cap',
         'volume_ratio_20','macd','macd_hist','ma20','ma50','stage',
     ]
     return e[[col for col in cols if col in e.columns]].sort_values(
