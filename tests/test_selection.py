@@ -170,3 +170,39 @@ def test_watchlist_ranks_near_entries_and_explains_failed_gates():
     assert out.iloc[0]['gate_fail_count'] == 0
     assert out[out['ticker'].eq('BBB')]['gate_failures'].iloc[0].startswith('Residual')
     assert 'Weekly trend' in out[out['ticker'].eq('CCC')]['gate_failures'].iloc[0]
+
+
+
+def test_local_entry_band_is_wider_for_high_atr_stock():
+    dates = pd.bdate_range('2026-09-07', periods=10)
+    rows=[]
+    for ticker, atr in [('LOW', .02), ('HIGH', .05)]:
+        for i,d in enumerate(dates):
+            close=30.0
+            if i == 9:
+                close=31.8
+            rows.append({
+                'date':d,'ticker':ticker,'sector':'Bank','close':close,
+                'sector_score':82,'leadership_score':86,'real_strength_score':84,
+                'short_momentum_score':80,'long_momentum_score':84,
+                'flow_score':82,'trend_score':86,'ret_5':.04,
+                'ma20':30.0,'ma20_distance':close/30.0-1,'ma50':28.0,
+                'macd':.5,'macd_hist':[-.08,-.07,-.06,-.05,-.04,-.03,-.02,-.01,.01,.08][i],
+                'macd_positive':i==9,'volume_ratio_20':1.20,
+                'bb_squeeze_recent_10':False,'bb_breakout_after_squeeze':False,
+                'prior_high_10':33.0,'medium_trend_confirm':True,'weekly_trend_confirm':True,
+                'weekly_ret12':.15,'rs_60':.12,'rs_120':.18,'rs_sector_60':.06,'sector_rs_60':.08,
+                'residual_mom_60':.08,'residual_mom_120':.12,'rs_persistence_count':3,
+                'path_quality_60':.20,'return_concentration_60':.18,
+                'atr_pct_20':atr,'atr_regime_ratio':1.0,'stage':'LEADER',
+            })
+    events=build_entry_signal_history(
+        pd.DataFrame(rows),
+        min_real_strength_score=70,min_rs_persistence=2,require_residual_momentum=True,
+        max_ma20_distance=.10,max_ret5=.15,adaptive_entry_volatility=True,
+        ma20_atr_multiple=1.5,ret5_atr_multiple=3.0,
+    )
+    assert events['ticker'].tolist()==['HIGH']
+    row=events.iloc[0]
+    assert row['entry_local_ma20_cap'] > .07
+    assert abs(row['atr_pct_20']-.05) < 1e-9

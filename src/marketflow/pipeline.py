@@ -11,7 +11,7 @@ from .storage import DuckStore
 from .dashboard import render_dashboard
 from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
 from .supabase_store import SupabaseRESTStore
-from .risk import simulate_position_lifecycle, stop_sensitivity_study
+from .risk import simulate_position_lifecycle, stop_sensitivity_study, risk_policy_comparison
 
 
 def _valid_cross_section_dates(feat: pd.DataFrame, eligible: pd.Series, model: dict):
@@ -219,6 +219,13 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             require_weekly_trend=bool(opp_cfg.get('entry_require_weekly_trend', True)),
             max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance', 0.08)),
             max_ret5=float(opp_cfg.get('entry_max_ret5', 0.10)),
+            adaptive_entry_volatility=bool(opp_cfg.get('entry_adaptive_volatility', True)),
+            pullback_atr_multiple=float(opp_cfg.get('entry_pullback_atr_multiple', 0.75)),
+            ma20_atr_multiple=float(opp_cfg.get('entry_ma20_atr_multiple', 1.50)),
+            ret5_atr_multiple=float(opp_cfg.get('entry_ret5_atr_multiple', 3.00)),
+            min_local_ma20_cap=float(opp_cfg.get('entry_min_local_ma20_cap', 0.03)),
+            min_local_ret5_cap=float(opp_cfg.get('entry_min_local_ret5_cap', 0.05)),
+            max_pullback_band=float(opp_cfg.get('entry_max_pullback_band', 0.04)),
             squeeze_bonus=float(opp_cfg.get('entry_squeeze_bonus', 5)),
             pullback_bonus=float(opp_cfg.get('entry_pullback_bonus', 3)),
         )
@@ -243,6 +250,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             max_ret5=float(opp_cfg.get('entry_max_ret5', 0.10)),
             max_age_sessions=int(opp_cfg.get('entry_max_age_sessions', 2)),
             max_distance_from_entry=float(opp_cfg.get('entry_max_distance_from_entry', 0.05)),
+            candidate_distance_atr_multiple=float(opp_cfg.get('entry_candidate_distance_atr_multiple', 1.50)),
             squeeze_bonus=float(opp_cfg.get('entry_squeeze_bonus', 5)),
             pullback_bonus=float(opp_cfg.get('entry_pullback_bonus', 3)),
         )
@@ -260,6 +268,11 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             require_weekly_trend=bool(opp_cfg.get('entry_require_weekly_trend', True)),
             max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance', 0.08)),
             max_ret5=float(opp_cfg.get('entry_max_ret5', 0.10)),
+            adaptive_entry_volatility=bool(opp_cfg.get('entry_adaptive_volatility', True)),
+            ma20_atr_multiple=float(opp_cfg.get('entry_ma20_atr_multiple', 1.50)),
+            ret5_atr_multiple=float(opp_cfg.get('entry_ret5_atr_multiple', 3.00)),
+            min_local_ma20_cap=float(opp_cfg.get('entry_min_local_ma20_cap', 0.03)),
+            min_local_ret5_cap=float(opp_cfg.get('entry_min_local_ret5_cap', 0.05)),
         )
         risk_cfg = cfg.get('risk_management', {})
         position_monitor = simulate_position_lifecycle(
@@ -309,6 +322,10 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             feat, scored, entry_signal_audit, risk_cfg
         )
         entry_lifecycle_audit.to_csv(out / 'entry_lifecycle_audit.csv', index=False)
+        risk_policy = risk_policy_comparison(
+            feat, scored, entry_signal_audit, risk_cfg
+        )
+        risk_policy.to_csv(out / 'risk_policy_comparison.csv', index=False)
 
         regime.to_csv(out / 'market_regime.csv', index=False)
         render_dashboard(

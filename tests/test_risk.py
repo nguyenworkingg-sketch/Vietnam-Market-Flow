@@ -101,3 +101,47 @@ def test_stop_sensitivity_reports_false_stops_and_rescued_losers():
     assert row['stopped_count']==2
     assert row['false_stop_winners']==1
     assert row['rescued_losers']==1
+
+
+
+def test_atr_adaptive_stop_widens_for_high_volatility_stock():
+    dates = pd.bdate_range('2026-04-01', periods=5)
+    entries = pd.DataFrame([
+        {'entry_date': dates[0], 'ticker':'LOW'},
+        {'entry_date': dates[0], 'ticker':'HIGH'},
+    ])
+    rows=[]
+    for ticker, atr in [('LOW', .02), ('HIGH', .05)]:
+        vals=[100,100,96,97,98]
+        for i,d in enumerate(dates):
+            low = vals[i]-.5
+            if i == 2:
+                low = 94.5
+            rows.append({
+                'date':d,'ticker':ticker,'open':vals[i],'high':vals[i]+1,
+                'low':low,'close':vals[i],'atr_pct_20':atr,'atr_regime_ratio':1.0,
+                'ma20':95,'ma20_slope_5':.01,'weekly_trend_confirm':True,
+            })
+    px=pd.DataFrame(rows)
+    scores=px[['date','ticker']].copy()
+    scores['real_strength_score']=80
+    scores['leadership_score']=80
+    scores['trend_score']=80
+
+    out=simulate_position_lifecycle(
+        px,scores,entries,
+        {'adaptive_volatility':True,'stop_atr_multiple':2.0,
+         'min_stop_pct':.05,'max_stop_pct':.12,
+         'min_profit_arm_pct':.10,'max_profit_arm_pct':.22,'profit_arm_r':1.5,
+         'trail_atr_multiple':2.5,'min_trail_pct':.08,'max_trail_pct':.18,
+         'strength_break_votes':2}
+    )
+    low=out[out['ticker'].eq('LOW')].iloc[0]
+    high=out[out['ticker'].eq('HIGH')].iloc[0]
+    assert abs(low['adaptive_stop_pct']-.05) < 1e-9
+    assert abs(high['adaptive_stop_pct']-.10) < 1e-9
+    assert low['status']=='CLOSED'
+    assert str(low['exit_reason']).startswith('VOL_ADAPTIVE_STOP')
+    assert high['status']=='OPEN'
+    assert abs(low['profit_arm_pct_used']-.10) < 1e-9
+    assert abs(high['profit_arm_pct_used']-.15) < 1e-9
