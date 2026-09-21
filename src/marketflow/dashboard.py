@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
+from .risk import simulate_position_lifecycle, stop_sensitivity_study
 
 
 DISPLAY = {
@@ -56,6 +57,18 @@ DISPLAY = {
     'gate_failures': 'Chưa đạt',
     'status': 'Trạng thái',
     'close': 'Giá hiện tại',
+    'signal_date': 'Ngày signal',
+    'fill_date': 'Ngày khớp T+1',
+    'fill_price': 'Giá khớp T+1',
+    'action': 'Hành động',
+    'status': 'Trạng thái',
+    'lifecycle_return': 'P/L theo rule',
+    'no_stop_return': 'P/L nếu giữ',
+    'peak_return': 'Lãi đỉnh',
+    'drawdown_from_peak': 'Từ đỉnh',
+    'protective_stop': 'Stop hiện tại',
+    'exit_reason': 'Lý do thoát',
+    'strength_break_votes': 'Break votes',
 }
 
 STAGE_VI = {
@@ -82,7 +95,7 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
     if d.empty:
         return "<div class='empty'>Chưa có dữ liệu phù hợp.</div>"
     for c in d.select_dtypes(include='number').columns:
-        if c == 'since_entry_pct':
+        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak'}:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{100*v:+.1f}%')
         else:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
@@ -918,6 +931,7 @@ def render_dashboard(
     sector_history: pd.DataFrame | None = None,
     backtest: dict[str, pd.DataFrame] | None = None,
     opportunity_cfg: dict | None = None,
+    risk_cfg: dict | None = None,
     price_history: pd.DataFrame | None = None,
     historical_entry_events: pd.DataFrame | None = None,
 ):
@@ -1043,6 +1057,53 @@ def render_dashboard(
             price_history, entry_candidates, entry_signal_history, days=126
         )
         entry_chart_label = "Fresh-entry chart"
+    risk_cfg = risk_cfg or {}
+    position_monitor = simulate_position_lifecycle(
+        price_history if price_history is not None else pd.DataFrame(),
+        score_history,
+        entry_signal_history,
+        risk_cfg,
+    )
+    risk_sensitivity = stop_sensitivity_study(
+        price_history if price_history is not None else pd.DataFrame(),
+        score_history,
+        entry_signal_history,
+    )
+    if position_monitor.empty:
+        position_table_html = "<div class='empty'>Chưa có entry V4 để theo dõi vòng đời vị thế.</div>"
+        position_status_html = ""
+    else:
+        position_table_html = _table(
+            position_monitor.sort_values(['status','signal_date']),
+            ['ticker','signal_date','fill_date','fill_price','action','status',
+             'lifecycle_return','no_stop_return','peak_return','drawdown_from_peak',
+             'protective_stop','strength_break_votes','exit_reason'],
+            20,
+        )
+        open_n = int(position_monitor['status'].isin(['OPEN','EXIT_NEXT_OPEN']).sum())
+        stopped_n = int(position_monitor['exit_reason'].fillna('').str.startswith('HARD_STOP').sum())
+        ride_n = int(position_monitor['action'].eq('RIDE TREND').sum())
+        position_status_html = (
+            f"<div class='risk-strip'><span><b>{open_n}</b> vị thế còn mở</span>"
+            f"<span><b>{ride_n}</b> đang RIDE TREND</span>"
+            f"<span><b>{stopped_n}</b> đã cut bởi hard stop</span></div>"
+        )
+    if risk_sensitivity.empty:
+        risk_sensitivity_html = ""
+    else:
+        rs = risk_sensitivity.copy()
+        rs['hard_stop_pct'] = pd.to_numeric(rs['hard_stop_pct'],errors='coerce')*100
+        rs['mean_return'] = pd.to_numeric(rs['mean_return'],errors='coerce')*100
+        rs['median_return'] = pd.to_numeric(rs['median_return'],errors='coerce')*100
+        rs['positive_rate'] = pd.to_numeric(rs['positive_rate'],errors='coerce')*100
+        rs = rs.rename(columns={
+            'hard_stop_pct':'Stop %','n':'N','mean_return':'Mean P/L %',
+            'median_return':'Median P/L %','positive_rate':'Hit >0 %',
+            'stopped_count':'Số bị stop','false_stop_winners':'Stop nhầm winner',
+            'rescued_losers':'Cắt được loser',
+        })
+        risk_sensitivity_html = rs.to_html(index=False,border=0,classes='data',escape=True,float_format=lambda v:f"{v:.1f}")
+
     default_chart_ticker = (
         str(entry_candidates.iloc[0]['ticker']) if not entry_candidates.empty
         else (str(entry_watchlist.iloc[0]['ticker']) if not entry_watchlist.empty
@@ -1070,7 +1131,7 @@ def render_dashboard(
     .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:10px 0 18px}.card,.panel,.mini-card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:13px;box-shadow:0 8px 28px rgba(0,0,0,.10)}
     .card{padding:15px 16px}.card-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.big{font-size:27px;font-weight:780;letter-spacing:-.04em;margin-top:5px}.sub{font-size:11px;color:var(--muted);margin-top:4px}
     .section{margin-top:18px}.panel{padding:17px}.grid-2{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.grid-even{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
-    .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.entry-zero,.entry-live{padding:10px 12px;border-radius:9px;margin:10px 0 12px;font-size:12px}.entry-zero{border:1px solid rgba(242,191,85,.35);background:rgba(242,191,85,.07);color:#f6d991}.entry-live{border:1px solid rgba(69,212,131,.35);background:rgba(69,212,131,.07);color:#9ef0bd}.watch-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:12px 0 7px;color:#dfe9f8;font-size:12px}.watch-head span{color:var(--amber);font-size:11px}.section-kicker{font-size:11px;color:var(--cyan);letter-spacing:.13em;text-transform:uppercase;font-weight:700}.empty{color:var(--muted);font-size:13px;padding:24px 8px;text-align:center}
+    .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.entry-zero,.entry-live{padding:10px 12px;border-radius:9px;margin:10px 0 12px;font-size:12px}.entry-zero{border:1px solid rgba(242,191,85,.35);background:rgba(242,191,85,.07);color:#f6d991}.entry-live{border:1px solid rgba(69,212,131,.35);background:rgba(69,212,131,.07);color:#9ef0bd}.watch-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:12px 0 7px;color:#dfe9f8;font-size:12px}.watch-head span{color:var(--amber);font-size:11px}.risk-strip{display:flex;gap:18px;flex-wrap:wrap;margin:8px 0 12px;color:var(--muted);font-size:12px}.risk-strip b{color:var(--text);font-size:14px}.section-kicker{font-size:11px;color:var(--cyan);letter-spacing:.13em;text-transform:uppercase;font-weight:700}.empty{color:var(--muted);font-size:13px;padding:24px 8px;text-align:center}
     .chart-svg{width:100%;height:auto;overflow:visible}.gridline{stroke:#20314c;stroke-width:1;stroke-dasharray:3 5}.axis,.axis-solid{stroke:#40516d;stroke-width:1}.axis{stroke-dasharray:5 5}.axis-label,.tick,.legend,.quad{fill:#8295b2;font-size:10px}.legend{fill:#adbad0}.quad{font-size:9px;letter-spacing:.08em}.quad-fill{opacity:.05}.q-good{fill:var(--green)}.q-watch{fill:var(--amber)}.q-cool{fill:var(--cyan)}.q-weak{fill:var(--rose)}
     .series{fill:none;stroke-width:2.2;vector-effect:non-scaling-stroke}.series.cyan{stroke:var(--cyan)}.series.green{stroke:var(--green)}.series.blue{stroke:var(--blue)}.series.amber{stroke:var(--amber)}.series.s1{stroke:var(--cyan)}.series.s2{stroke:var(--green)}.series.s3{stroke:var(--amber)}.series.s4{stroke:var(--violet)}.series.s5{stroke:var(--rose)}
     .bubble{fill:#7186a5;fill-opacity:.66;stroke:#c2cce0;stroke-opacity:.42}.bubble.emerging{fill:var(--amber)}.bubble.strong{fill:var(--cyan)}.bubble.hot{fill:var(--green)}.bubble-label,.point-label{fill:#dfe9f8;font-size:9px;paint-order:stroke;stroke:#07101d;stroke-width:3px;stroke-linejoin:round}
@@ -1119,13 +1180,21 @@ def render_dashboard(
       {entry_chart_html}
     </div>
 
+    <div class='panel section' id='position-risk'>
+      <div class='section-head'><div><div class='section-kicker'>Position management</div><h2>Cut loss nhanh · Gồng lời theo Strength</h2></div><span class='tag'>T+1 execution · causal</span></div>
+      <div class='note'>Rule hiện tại dùng hard stop <b>{100*float(risk_cfg.get('hard_stop_pct',0.05)):.0f}%</b>. Khi lãi đỉnh đạt <b>+{100*float(risk_cfg.get('profit_arm_pct',0.08)):.0f}%</b>, hệ thống chuyển sang bảo vệ lợi nhuận: không cho stop thấp hơn <b>+{100*float(risk_cfg.get('profit_floor_pct',0.02)):.0f}%</b> và trailing <b>{100*float(risk_cfg.get('peak_trail_pct',0.07)):.0f}%</b> từ đỉnh. Nếu ít nhất <b>{int(risk_cfg.get('strength_break_votes',2))}</b> tín hiệu Strength/Leadership/Trend/MA20/Weekly cùng vỡ ở close, thoát ở open phiên kế tiếp. Mục tiêu là cắt loser sớm nhưng không ép winner chốt non.</div>
+      {position_status_html}
+      <div class='table-wrap'>{position_table_html}</div>
+      <details style='margin-top:12px'><summary>Stop-loss sensitivity — chưa dùng để tối ưu tham số</summary><div class='table-wrap' style='margin-top:10px'>{risk_sensitivity_html}</div><div class='note'>Sample V4 hiện còn nhỏ; bảng này dùng để phát hiện false-stop và rescued loser, không chọn threshold chỉ vì backtest đẹp nhất.</div></details>
+    </div>
+
     <div class='panel section' id='chart-explorer'>
       <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6M / 12M · Versioned history</span></div>
       <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V4 hiện tại hiển thị màu xanh; tín hiệu từ V2/V3 cũ được giữ lại dưới dạng Legacy màu vàng để audit, không được xem là tín hiệu hiện hành.</div>
       {stock_explorer_html}
     </div>
 
-    <div class='nav'><a href='#entry-top3'>Fresh entry</a><a href='#chart-explorer'>Chart cổ phiếu</a><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
+    <div class='nav'><a href='#entry-top3'>Fresh entry</a><a href='#position-risk'>Risk / Exit</a><a href='#chart-explorer'>Chart cổ phiếu</a><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
 
     <div class='kpis' id='market'>
       <div class='card'><div class='card-label'>Trạng thái</div><div class='big'>{html.escape(regime_text)}</div><div class='sub'>Regime tổng hợp</div></div>

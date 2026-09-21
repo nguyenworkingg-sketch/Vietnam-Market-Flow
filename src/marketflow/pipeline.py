@@ -11,6 +11,7 @@ from .storage import DuckStore
 from .dashboard import render_dashboard
 from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
 from .supabase_store import SupabaseRESTStore
+from .risk import simulate_position_lifecycle, stop_sensitivity_study
 
 
 def _valid_cross_section_dates(feat: pd.DataFrame, eligible: pd.Series, model: dict):
@@ -260,6 +261,16 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance', 0.08)),
             max_ret5=float(opp_cfg.get('entry_max_ret5', 0.10)),
         )
+        risk_cfg = cfg.get('risk_management', {})
+        position_monitor = simulate_position_lifecycle(
+            feat, scored, entry_signal_history, risk_cfg
+        )
+        risk_stop_sensitivity = stop_sensitivity_study(
+            feat, scored, entry_signal_history
+        )
+        position_monitor.to_csv(out / 'position_monitor.csv', index=False)
+        risk_stop_sensitivity.to_csv(out / 'risk_stop_sensitivity.csv', index=False)
+
         short_entries.to_csv(out / 'opportunities_short_latest.csv', index=False)
         long_entries.to_csv(out / 'opportunities_long_latest.csv', index=False)
         portfolio.to_csv(out / 'model_portfolio_10.csv', index=False)
@@ -304,6 +315,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             regime_history=regime,
             sector_history=sector_daily,
             opportunity_cfg=opp_cfg,
+            risk_cfg=risk_cfg,
             price_history=feat,
             historical_entry_events=entry_signal_audit,
         )
@@ -317,6 +329,7 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             regime_history=regime,
             sector_history=sector_daily,
             opportunity_cfg=opp_cfg,
+            risk_cfg=risk_cfg,
             price_history=feat,
             historical_entry_events=entry_signal_audit,
         )

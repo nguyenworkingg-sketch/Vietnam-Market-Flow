@@ -97,6 +97,18 @@ opportunities:
   entry_squeeze_bonus: 5
   entry_pullback_bonus: 3
 
+risk_management:
+  # Provisional guardrails. Current V4 sample is small, so these are not
+  # presented as globally optimal parameters.
+  hard_stop_pct: 0.05
+  profit_arm_pct: 0.08
+  profit_floor_pct: 0.02
+  peak_trail_pct: 0.07
+  strength_break_votes: 2
+  strength_real_floor: 60
+  strength_leadership_floor: 60
+  strength_trend_floor: 55
+
 stages:
   leader_score: 85
   mature_score: 90

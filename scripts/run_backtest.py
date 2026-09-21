@@ -74,6 +74,7 @@ def main():
     }
     cfg = yaml.safe_load((ROOT/'config'/'model.yaml').read_text(encoding='utf-8'))
     opp_cfg = cfg.get('opportunities', {})
+    risk_cfg = cfg.get('risk_management', {})
     render_dashboard(
         latest, reg_latest, ROOT/'outputs'/'dashboard.html',
         scored_history=scored,
@@ -81,6 +82,7 @@ def main():
         sector_history=sector_history,
         backtest=bt_payload,
         opportunity_cfg=opp_cfg,
+        risk_cfg=risk_cfg,
         price_history=panel,
         historical_entry_events=entry_audit,
     )
@@ -92,6 +94,7 @@ def main():
         sector_history=sector_history,
         backtest=bt_payload,
         opportunity_cfg=opp_cfg,
+        risk_cfg=risk_cfg,
         price_history=panel,
         historical_entry_events=entry_audit,
     )
