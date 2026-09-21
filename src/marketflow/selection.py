@@ -438,6 +438,9 @@ def build_entry_candidates(
     x = scored_history.copy()
     x['date'] = pd.to_datetime(x['date']).dt.normalize()
     x = x.sort_values(['ticker','date']).reset_index(drop=True)
+    for col in ['atr_pct_20','atr_regime_ratio']:
+        if col not in x.columns:
+            x[col] = np.nan
     latest_date = x['date'].max()
     latest = x[x['date'].eq(latest_date)].copy()
 
