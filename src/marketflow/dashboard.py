@@ -643,7 +643,7 @@ def _stock_chart_explorer(
             ctx.strokeStyle='#f0748b';ctx.lineWidth=2;
             ctx.beginPath();ctx.moveTo(xx-5,yy-5);ctx.lineTo(xx+5,yy+5);ctx.moveTo(xx+5,yy-5);ctx.lineTo(xx-5,yy+5);ctx.stroke();
             ctx.fillStyle='#f1919e';ctx.font='700 10px system-ui';ctx.textAlign='center';
-            const lbl=(exitReason||'EXIT').startsWith('HARD_STOP')?'CUT ':'EXIT ';
+            const lbl=(exitReason||'EXIT').includes('STOP')?'CUT ':'EXIT ';
             ctx.fillText(lbl+pct(lifeRet)+' '+exitDate.slice(8,10)+'/'+exitDate.slice(5,7),xx,Math.max(PT+12,yy-10));
             ctx.textAlign='left';
           }} else {{
@@ -670,7 +670,7 @@ def _stock_chart_explorer(
           s+=' · '+tag+' signal '+ev[0]+' @ '+fmt(ev[1]);
           if(life) {{
             if(life[4]==='CLOSED') {{
-              s+=' · risk replay: '+((life[8]||'EXIT').startsWith('HARD_STOP')?'CUT LOSS':'EXIT')+' '+life[6]+' @ '+fmt(life[7])+' · P/L '+pct(life[9]);
+              s+=' · risk replay: '+((life[8]||'EXIT').includes('STOP')?'CUT LOSS':'EXIT')+' '+life[6]+' @ '+fmt(life[7])+' · P/L '+pct(life[9]);
             }} else {{
               s+=' · '+life[4]+' / '+life[5]+' · P/L '+pct(life[9]);
               if(Number.isFinite(life[11])) s+=' · stop '+fmt(life[11],2);
@@ -682,7 +682,7 @@ def _stock_chart_explorer(
           const tag=modelTag(lastAll[4]);
           const life=lifeMap[lastAll[0]+'|'+lastAll[4]];
           s+=' · Không có signal trong '+(rangeN===126?'6M':'12M')+' · gần nhất '+tag+' '+lastAll[0];
-          if(life && life[4]==='CLOSED') s+=' · đã '+((life[8]||'').startsWith('HARD_STOP')?'CUT LOSS':'EXIT')+' '+life[6]+' · P/L '+pct(life[9]);
+          if(life && life[4]==='CLOSED') s+=' · đã '+((life[8]||'').includes('STOP')?'CUT LOSS':'EXIT')+' '+life[6]+' · P/L '+pct(life[9]);
         }} else {{
           s+=' · Chưa từng có entry signal được lưu';
         }}
