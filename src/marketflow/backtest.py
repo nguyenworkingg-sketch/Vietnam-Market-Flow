@@ -220,12 +220,56 @@ def entry_signal_study(
     return pd.DataFrame(rows)
 
 
+def score_comparison_study(
+    prepared: pd.DataFrame,
+    horizons: Iterable[int] = (5, 20, 60),
+    scores: Iterable[str] = ('rs_score','real_strength_score','leadership_score'),
+) -> pd.DataFrame:
+    """Compare raw RS with V4 real strength on identical dates/universe.
+
+    Spearman IC is calculated date-by-date against market- and sector-relative
+    forward returns. This is a challenger diagnostic, not an alpha claim.
+    """
+    rows = []
+    for score in scores:
+        if score not in prepared.columns:
+            continue
+        for h in horizons:
+            for metric, target in [
+                ('market_alpha', f'alpha_market_{h}'),
+                ('sector_alpha', f'alpha_sector_{h}'),
+            ]:
+                if target not in prepared.columns:
+                    continue
+                daily = []
+                cols = ['date', score, target]
+                for dt, g in prepared[cols].dropna().groupby('date'):
+                    if len(g) < 20:
+                        continue
+                    ic = g[score].corr(g[target], method='spearman')
+                    if pd.notna(ic):
+                        daily.append(ic)
+                s = pd.Series(daily, dtype=float)
+                rows.append({
+                    'score': score,
+                    'horizon': h,
+                    'metric': metric,
+                    'mean_ic': s.mean() if len(s) else np.nan,
+                    'median_ic': s.median() if len(s) else np.nan,
+                    'ic_positive_rate': (s > 0).mean() if len(s) else np.nan,
+                    'ic_std': s.std() if len(s) else np.nan,
+                    'days': len(s),
+                })
+    return pd.DataFrame(rows)
+
+
 def run_research_suite(panel: pd.DataFrame, horizons: Iterable[int] = (5, 20, 60)) -> dict[str, pd.DataFrame]:
     prepared = add_forward_returns(panel, horizons=horizons)
     deciles = decile_study(prepared, horizons=horizons)
     stages = stage_entry_study(prepared, horizons=horizons)
     ic_daily, ic_summary = information_coefficient(prepared, horizons=horizons)
     summary = research_summary(deciles, stages, ic_summary, horizons=horizons)
+    score_comparison = score_comparison_study(prepared, horizons=horizons)
     return {
         'prepared': prepared,
         'deciles': deciles,
@@ -233,4 +277,5 @@ def run_research_suite(panel: pd.DataFrame, horizons: Iterable[int] = (5, 20, 60
         'ic_daily': ic_daily,
         'ic_summary': ic_summary,
         'summary': summary,
+        'score_comparison': score_comparison,
     }
