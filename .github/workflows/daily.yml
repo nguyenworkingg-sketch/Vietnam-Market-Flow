@@ -108,6 +108,7 @@ jobs:
             outputs/top3_entry_watchlist.csv
             outputs/entry_signal_history.csv
             outputs/entry_signal_audit.csv
+            outputs/entry_lifecycle_audit.csv
             outputs/position_monitor.csv
             outputs/risk_stop_sensitivity.csv
             outputs/backtest/
