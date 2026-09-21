@@ -245,9 +245,15 @@ def build_entry_signal_history(
         & pd.to_numeric(x['rs_sector_60'], errors='coerce').gt(0)
         & pd.to_numeric(x['sector_rs_60'], errors='coerce').gt(0)
         & pd.to_numeric(x['weekly_ret12'], errors='coerce').gt(0)
-        & pd.to_numeric(x['real_strength_med10'], errors='coerce').ge(float(min_real_strength_score))
-        & pd.to_numeric(x['rs_persistence_count'], errors='coerce').ge(int(min_rs_persistence))
     )
+    if float(min_real_strength_score) > 0:
+        persistent_strength &= pd.to_numeric(
+            x['real_strength_med10'], errors='coerce'
+        ).ge(float(min_real_strength_score))
+    if int(min_rs_persistence) > 0:
+        persistent_strength &= pd.to_numeric(
+            x['rs_persistence_count'], errors='coerce'
+        ).ge(int(min_rs_persistence))
     if require_residual_momentum:
         persistent_strength &= (
             pd.to_numeric(x['residual_mom_60'], errors='coerce').gt(0)
@@ -450,9 +456,15 @@ def build_entry_candidates(
         & merged['since_entry_pct'].between(-0.06, float(max_distance_from_entry))
         & pd.to_numeric(merged['ma20_distance_current'], errors='coerce').le(float(max_ma20_distance))
         & pd.to_numeric(merged['ret_5_current'], errors='coerce').le(float(max_ret5))
-        & pd.to_numeric(merged['real_strength_score_current'], errors='coerce').ge(float(min_real_strength_score))
-        & pd.to_numeric(merged['rs_persistence_count_current'], errors='coerce').ge(int(min_rs_persistence))
     )
+    if float(min_real_strength_score) > 0:
+        current_ok &= pd.to_numeric(
+            merged['real_strength_score_current'], errors='coerce'
+        ).ge(float(min_real_strength_score))
+    if int(min_rs_persistence) > 0:
+        current_ok &= pd.to_numeric(
+            merged['rs_persistence_count_current'], errors='coerce'
+        ).ge(int(min_rs_persistence))
     if require_residual_momentum:
         current_ok &= (
             pd.to_numeric(merged['residual_mom_60_current'], errors='coerce').gt(0)
