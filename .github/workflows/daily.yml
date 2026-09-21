@@ -111,4 +111,5 @@ jobs:
             outputs/entry_lifecycle_audit.csv
             outputs/position_monitor.csv
             outputs/risk_stop_sensitivity.csv
+            outputs/risk_policy_comparison.csv
             outputs/backtest/
