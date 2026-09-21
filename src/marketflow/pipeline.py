@@ -305,6 +305,10 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
                 .reset_index(drop=True)
             )
         entry_signal_audit.to_csv(out / 'entry_signal_audit.csv', index=False)
+        entry_lifecycle_audit = simulate_position_lifecycle(
+            feat, scored, entry_signal_audit, risk_cfg
+        )
+        entry_lifecycle_audit.to_csv(out / 'entry_lifecycle_audit.csv', index=False)
 
         regime.to_csv(out / 'market_regime.csv', index=False)
         render_dashboard(
