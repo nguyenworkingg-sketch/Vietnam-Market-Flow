@@ -100,6 +100,22 @@ def add_stock_features(prices: pd.DataFrame, benchmark: pd.DataFrame) -> pd.Data
     p['turnover_proxy_avg_20'] = g['turnover_proxy'].transform(lambda s: s.rolling(20, min_periods=10).mean())
     p['turnover_proxy_accel_20'] = g['turnover_proxy_avg_20'].pct_change(20, fill_method=None)
     p['volatility_20'] = g['ret_1'].transform(lambda s: s.rolling(20, min_periods=15).std())
+
+    # Stock-specific trading range. ATR is intentionally backward-looking so it
+    # can size entry tolerance and exits to each ticker's own realized movement.
+    p['_prev_close_tr'] = g['close'].shift(1)
+    tr1 = p['high'] - p['low']
+    tr2 = (p['high'] - p['_prev_close_tr']).abs()
+    tr3 = (p['low'] - p['_prev_close_tr']).abs()
+    p['true_range'] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    p['atr20'] = p.groupby('ticker')['true_range'].transform(
+        lambda s: s.rolling(20, min_periods=10).mean()
+    )
+    p['atr_pct_20'] = _safe_div(p['atr20'], p['close'])
+    p['atr_pct_median_120'] = p.groupby('ticker')['atr_pct_20'].transform(
+        lambda s: s.rolling(120, min_periods=40).median()
+    )
+    p['atr_regime_ratio'] = _safe_div(p['atr_pct_20'], p['atr_pct_median_120']).clip(0.5, 2.5)
     p['positive_day_share_20'] = g['ret_1'].transform(lambda s: (s > 0).rolling(20, min_periods=15).mean())
     posvol = p['volume'].where(p['ret_1'] > 0, 0.0)
     p['_posvol'] = posvol
@@ -151,7 +167,7 @@ def add_stock_features(prices: pd.DataFrame, benchmark: pd.DataFrame) -> pd.Data
     )
 
     p = _add_weekly_confirmation(p)
-    return p.drop(columns=['_posvol','_bb_squeeze_prev'])
+    return p.drop(columns=['_posvol','_bb_squeeze_prev','_prev_close_tr'])
 
 
 def add_sector_features(df: pd.DataFrame) -> pd.DataFrame:
