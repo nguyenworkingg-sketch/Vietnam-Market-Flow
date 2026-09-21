@@ -619,6 +619,11 @@ def build_entry_watchlist(
     require_weekly_trend: bool = True,
     max_ma20_distance: float = 0.08,
     max_ret5: float = 0.10,
+    adaptive_entry_volatility: bool = True,
+    ma20_atr_multiple: float = 1.5,
+    ret5_atr_multiple: float = 3.0,
+    min_local_ma20_cap: float = 0.03,
+    min_local_ret5_cap: float = 0.05,
 ) -> pd.DataFrame:
     """Rank near-entry names without weakening or pretending to pass entry gates."""
     if scored_history is None or scored_history.empty or top_n <= 0:
@@ -655,8 +660,12 @@ def build_entry_watchlist(
         if require_medium_trend: checks.append((bool(row.get('medium_trend_confirm',False)),'Daily trend'))
         if require_weekly_trend: checks.append((bool(row.get('weekly_trend_confirm',False)),'Weekly trend'))
         atr = pd.to_numeric(pd.Series([row.get('atr_pct_20',np.nan)]), errors='coerce').iloc[0]
-        local_ma20 = min(max_ma20_distance, max(0.03, 1.5*atr)) if pd.notna(atr) else max_ma20_distance
-        local_ret5 = min(max_ret5, max(0.05, 3.0*atr)) if pd.notna(atr) else max_ret5
+        if adaptive_entry_volatility and pd.notna(atr):
+            local_ma20 = min(max_ma20_distance, max(min_local_ma20_cap, ma20_atr_multiple*atr))
+            local_ret5 = min(max_ret5, max(min_local_ret5_cap, ret5_atr_multiple*atr))
+        else:
+            local_ma20 = max_ma20_distance
+            local_ret5 = max_ret5
         checks += [(row.get('ma20_distance',np.nan) <= local_ma20,'MA20 extension'),
                    (row.get('ret_5',np.nan) <= local_ret5,'5D extension')]
         for ok,label in checks:
