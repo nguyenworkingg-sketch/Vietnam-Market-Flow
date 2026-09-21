@@ -268,6 +268,11 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             require_weekly_trend=bool(opp_cfg.get('entry_require_weekly_trend', True)),
             max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance', 0.08)),
             max_ret5=float(opp_cfg.get('entry_max_ret5', 0.10)),
+            adaptive_entry_volatility=bool(opp_cfg.get('entry_adaptive_volatility', True)),
+            ma20_atr_multiple=float(opp_cfg.get('entry_ma20_atr_multiple', 1.50)),
+            ret5_atr_multiple=float(opp_cfg.get('entry_ret5_atr_multiple', 3.00)),
+            min_local_ma20_cap=float(opp_cfg.get('entry_min_local_ma20_cap', 0.03)),
+            min_local_ret5_cap=float(opp_cfg.get('entry_min_local_ret5_cap', 0.05)),
         )
         risk_cfg = cfg.get('risk_management', {})
         position_monitor = simulate_position_lifecycle(
