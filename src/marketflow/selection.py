@@ -184,6 +184,13 @@ def build_entry_signal_history(
     require_weekly_trend: bool = True,
     max_ma20_distance: float = 0.08,
     max_ret5: float = 0.10,
+    adaptive_entry_volatility: bool = True,
+    pullback_atr_multiple: float = 0.75,
+    ma20_atr_multiple: float = 1.5,
+    ret5_atr_multiple: float = 3.0,
+    min_local_ma20_cap: float = 0.03,
+    min_local_ret5_cap: float = 0.05,
+    max_pullback_band: float = 0.04,
     squeeze_bonus: float = 5.0,
     pullback_bonus: float = 3.0,
 ) -> pd.DataFrame:
@@ -213,6 +220,7 @@ def build_entry_signal_history(
         'rs_60','rs_120','rs_sector_60','sector_rs_60',
         'real_strength_score','residual_mom_60','residual_mom_120',
         'rs_persistence_count','path_quality_60','return_concentration_60',
+        'atr_pct_20','atr_regime_ratio',
     ]
     for col in needed:
         if col not in x.columns:
@@ -269,11 +277,38 @@ def build_entry_signal_history(
             & pd.to_numeric(x['macd_hist'], errors='coerce').gt(0)
         )
 
+    # Volatility-local timing bands. High-volatility stocks receive more room;
+    # low-volatility stocks must enter closer to the trend. Missing ATR falls
+    # back to the legacy fixed caps so older fixtures remain comparable.
+    atr = pd.to_numeric(x['atr_pct_20'], errors='coerce')
+    if adaptive_entry_volatility:
+        x['_pullback_band'] = (
+            atr.mul(float(pullback_atr_multiple))
+            .clip(lower=0.01, upper=float(max_pullback_band))
+            .fillna(0.02)
+        )
+        x['_local_ma20_cap'] = (
+            atr.mul(float(ma20_atr_multiple))
+            .clip(lower=float(min_local_ma20_cap), upper=float(max_ma20_distance))
+            .fillna(float(max_ma20_distance))
+        )
+        x['_local_ret5_cap'] = (
+            atr.mul(float(ret5_atr_multiple))
+            .clip(lower=float(min_local_ret5_cap), upper=float(max_ret5))
+            .fillna(float(max_ret5))
+        )
+        x['_local_down_cap'] = atr.clip(lower=0.02, upper=0.06).fillna(0.02)
+    else:
+        x['_pullback_band'] = 0.02
+        x['_local_ma20_cap'] = float(max_ma20_distance)
+        x['_local_ret5_cap'] = float(max_ret5)
+        x['_local_down_cap'] = 0.02
+
     # Entry A: resume after a controlled pullback near MA20. This is designed to
     # enter after strength is already proven, but before price becomes extended.
     pullback_resume = (
         pd.to_numeric(x['prev_close'], errors='coerce').le(
-            pd.to_numeric(x['prev_ma20'], errors='coerce') * 1.02
+            pd.to_numeric(x['prev_ma20'], errors='coerce') * (1.0 + x['_pullback_band'])
         )
         & pd.to_numeric(x['close'], errors='coerce').gt(pd.to_numeric(x['ma20'], errors='coerce'))
         & pd.to_numeric(x['macd_hist'], errors='coerce').gt(0)
@@ -281,8 +316,10 @@ def build_entry_signal_history(
             pd.to_numeric(x['prev_macd_hist'], errors='coerce')
         )
         & pd.to_numeric(x['volume_ratio_20'], errors='coerce').ge(1.0)
-        & pd.to_numeric(x['ma20_distance'], errors='coerce').between(0, min(0.06, float(max_ma20_distance)))
-        & pd.to_numeric(x['ret_5'], errors='coerce').between(-0.05, min(0.08, float(max_ret5)))
+        & pd.to_numeric(x['ma20_distance'], errors='coerce').ge(0)
+        & pd.to_numeric(x['ma20_distance'], errors='coerce').le(x['_local_ma20_cap'])
+        & pd.to_numeric(x['ret_5'], errors='coerce').ge(-x['_local_down_cap'])
+        & pd.to_numeric(x['ret_5'], errors='coerce').le(x['_local_ret5_cap'])
     )
 
     # Entry B: breakout from genuine compression, but only while still close to
@@ -291,13 +328,16 @@ def build_entry_signal_history(
         x['bb_squeeze_recent_10'].fillna(False).astype(bool)
         & pd.to_numeric(x['close'], errors='coerce').gt(pd.to_numeric(x['prior_high_10'], errors='coerce'))
         & pd.to_numeric(x['volume_ratio_20'], errors='coerce').ge(1.20)
-        & pd.to_numeric(x['ma20_distance'], errors='coerce').between(0, float(max_ma20_distance))
-        & pd.to_numeric(x['ret_5'], errors='coerce').le(float(max_ret5))
+        & pd.to_numeric(x['ma20_distance'], errors='coerce').ge(0)
+        & pd.to_numeric(x['ma20_distance'], errors='coerce').le(x['_local_ma20_cap'])
+        & pd.to_numeric(x['ret_5'], errors='coerce').le(x['_local_ret5_cap'])
     )
 
     anti_chase = (
-        pd.to_numeric(x['ma20_distance'], errors='coerce').between(-0.02, float(max_ma20_distance))
-        & pd.to_numeric(x['ret_5'], errors='coerce').between(-0.06, float(max_ret5))
+        pd.to_numeric(x['ma20_distance'], errors='coerce').ge(-x['_local_down_cap'])
+        & pd.to_numeric(x['ma20_distance'], errors='coerce').le(x['_local_ma20_cap'])
+        & pd.to_numeric(x['ret_5'], errors='coerce').ge(-x['_local_down_cap'])
+        & pd.to_numeric(x['ret_5'], errors='coerce').le(x['_local_ret5_cap'])
     )
     raw_signal = persistent_strength & anti_chase & (pullback_resume | squeeze_breakout)
 
@@ -351,7 +391,9 @@ def build_entry_signal_history(
         'rs_persistence_count','path_quality_60','return_concentration_60',
         'rs_60','rs_120','rs_sector_60','sector_rs_60',
         'weekly_ret12','medium_trend_confirm','weekly_trend_confirm',
-        'ret_5','ma20_distance','volume_ratio_20','macd','macd_hist','ma20','ma50','stage',
+        'ret_5','ma20_distance','atr_pct_20','atr_regime_ratio',
+        '_pullback_band','_local_ma20_cap','_local_ret5_cap',
+        'volume_ratio_20','macd','macd_hist','ma20','ma50','stage',
     ]
     return e[[col for col in cols if col in e.columns]].sort_values(
         ['entry_date','entry_score'], ascending=[True,False]
@@ -375,6 +417,14 @@ def build_entry_candidates(
     max_ret5: float = 0.10,
     max_age_sessions: int = 2,
     max_distance_from_entry: float = 0.05,
+    adaptive_entry_volatility: bool = True,
+    pullback_atr_multiple: float = 0.75,
+    ma20_atr_multiple: float = 1.5,
+    ret5_atr_multiple: float = 3.0,
+    candidate_distance_atr_multiple: float = 1.5,
+    min_local_ma20_cap: float = 0.03,
+    min_local_ret5_cap: float = 0.05,
+    max_pullback_band: float = 0.04,
     squeeze_bonus: float = 5.0,
     pullback_bonus: float = 3.0,
 ) -> pd.DataFrame:
@@ -402,6 +452,13 @@ def build_entry_candidates(
         require_weekly_trend=require_weekly_trend,
         max_ma20_distance=max_ma20_distance,
         max_ret5=max_ret5,
+        adaptive_entry_volatility=adaptive_entry_volatility,
+        pullback_atr_multiple=pullback_atr_multiple,
+        ma20_atr_multiple=ma20_atr_multiple,
+        ret5_atr_multiple=ret5_atr_multiple,
+        min_local_ma20_cap=min_local_ma20_cap,
+        min_local_ret5_cap=min_local_ret5_cap,
+        max_pullback_band=max_pullback_band,
         squeeze_bonus=squeeze_bonus,
         pullback_bonus=pullback_bonus,
     )
@@ -413,7 +470,7 @@ def build_entry_candidates(
         'ticker','sector','close','sector_score','leadership_score','short_momentum_score',
         'long_momentum_score','flow_score','trend_score','real_strength_score',
         'residual_mom_60','residual_mom_120','rs_persistence_count','path_quality_60',
-        'ma20_distance','ret_5',
+        'ma20_distance','ret_5','atr_pct_20','atr_regime_ratio',
         'medium_trend_confirm','weekly_trend_confirm','stage',
     ]
     current = latest[[col for col in current_cols if col in latest.columns]].copy().rename(columns={
@@ -431,6 +488,8 @@ def build_entry_candidates(
         'path_quality_60':'path_quality_60_current',
         'ma20_distance':'ma20_distance_current',
         'ret_5':'ret_5_current',
+        'atr_pct_20':'atr_pct_20_current',
+        'atr_regime_ratio':'atr_regime_ratio_current',
         'medium_trend_confirm':'medium_trend_confirm_current',
         'weekly_trend_confirm':'weekly_trend_confirm_current',
         'stage':'stage_current',
@@ -454,11 +513,28 @@ def build_entry_candidates(
     merged['current_price'] = pd.to_numeric(merged['current_price'], errors='coerce')
     merged['since_entry_pct'] = merged['current_price'] / pd.to_numeric(merged['entry_price'], errors='coerce') - 1
 
+    current_atr = pd.to_numeric(merged.get('atr_pct_20_current'), errors='coerce')
+    if adaptive_entry_volatility:
+        current_ma20_cap = current_atr.mul(float(ma20_atr_multiple)).clip(
+            lower=float(min_local_ma20_cap), upper=float(max_ma20_distance)
+        ).fillna(float(max_ma20_distance))
+        current_ret5_cap = current_atr.mul(float(ret5_atr_multiple)).clip(
+            lower=float(min_local_ret5_cap), upper=float(max_ret5)
+        ).fillna(float(max_ret5))
+        current_entry_distance = current_atr.mul(float(candidate_distance_atr_multiple)).clip(
+            lower=0.04, upper=float(max_distance_from_entry)
+        ).fillna(float(max_distance_from_entry))
+    else:
+        current_ma20_cap = pd.Series(float(max_ma20_distance), index=merged.index)
+        current_ret5_cap = pd.Series(float(max_ret5), index=merged.index)
+        current_entry_distance = pd.Series(float(max_distance_from_entry), index=merged.index)
+
     current_ok = (
         merged['entry_age_sessions'].le(int(max_age_sessions))
-        & merged['since_entry_pct'].between(-0.06, float(max_distance_from_entry))
-        & pd.to_numeric(merged['ma20_distance_current'], errors='coerce').le(float(max_ma20_distance))
-        & pd.to_numeric(merged['ret_5_current'], errors='coerce').le(float(max_ret5))
+        & merged['since_entry_pct'].ge(-0.06)
+        & merged['since_entry_pct'].le(current_entry_distance)
+        & pd.to_numeric(merged['ma20_distance_current'], errors='coerce').le(current_ma20_cap)
+        & pd.to_numeric(merged['ret_5_current'], errors='coerce').le(current_ret5_cap)
     )
     if float(min_real_strength_score) > 0:
         current_ok &= pd.to_numeric(
@@ -500,7 +576,8 @@ def build_entry_candidates(
         'real_strength_med10','leadership_med10','long_med10','sector_med10',
         'sector_score_current','leadership_score_current','real_strength_score_current',
         'residual_mom_60_current','residual_mom_120_current','rs_persistence_count_current',
-        'path_quality_60_current','short_momentum_score_current',
+        'path_quality_60_current','atr_pct_20_current','atr_regime_ratio_current',
+        'short_momentum_score_current',
         'long_momentum_score_current','flow_score_current','trend_score_current',
         'medium_trend_confirm_current','weekly_trend_confirm_current','stage_current',
     ]
@@ -513,6 +590,8 @@ def build_entry_candidates(
         'residual_mom_120_current':'residual_mom_120',
         'rs_persistence_count_current':'rs_persistence_count',
         'path_quality_60_current':'path_quality_60',
+        'atr_pct_20_current':'atr_pct_20',
+        'atr_regime_ratio_current':'atr_regime_ratio',
         'short_momentum_score_current':'short_momentum_score',
         'long_momentum_score_current':'long_momentum_score',
         'flow_score_current':'flow_score',
@@ -572,8 +651,11 @@ def build_entry_watchlist(
                        (row.get('residual_mom_120',np.nan)>0,'Residual 120P')]
         if require_medium_trend: checks.append((bool(row.get('medium_trend_confirm',False)),'Daily trend'))
         if require_weekly_trend: checks.append((bool(row.get('weekly_trend_confirm',False)),'Weekly trend'))
-        checks += [(row.get('ma20_distance',np.nan) <= max_ma20_distance,'MA20 extension'),
-                   (row.get('ret_5',np.nan) <= max_ret5,'5D extension')]
+        atr = pd.to_numeric(pd.Series([row.get('atr_pct_20',np.nan)]), errors='coerce').iloc[0]
+        local_ma20 = min(max_ma20_distance, max(0.03, 1.5*atr)) if pd.notna(atr) else max_ma20_distance
+        local_ret5 = min(max_ret5, max(0.05, 3.0*atr)) if pd.notna(atr) else max_ret5
+        checks += [(row.get('ma20_distance',np.nan) <= local_ma20,'MA20 extension'),
+                   (row.get('ret_5',np.nan) <= local_ret5,'5D extension')]
         for ok,label in checks:
             if not bool(ok): failures.append(label)
         return failures
@@ -595,5 +677,5 @@ def build_entry_watchlist(
     cols=['watch_rank','ticker','sector','status','watch_score','gate_fail_count','gate_failures',
           'close','real_strength_med10','leadership_med10','long_med10','sector_med10',
           'short_momentum_score','residual_mom_60','residual_mom_120','rs_persistence_count',
-          'ma20_distance','ret_5','stage']
+          'ma20_distance','ret_5','atr_pct_20','atr_regime_ratio','stage']
     return out[[z for z in cols if z in out.columns]].reset_index(drop=True)
