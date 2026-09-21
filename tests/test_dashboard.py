@@ -183,3 +183,50 @@ def test_entry_marker_is_rendered_above_chart():
     svg = _candlestick_macd_svg(px, 'AAA', days=40, entry_events=entry)
     assert 'ENTRY 18/09' in svg
     assert 'Từ entry:' in svg
+
+
+
+def test_dashboard_falls_back_to_watchlist_when_no_fresh_entry(tmp_path):
+    latest = _latest()
+    dates = pd.bdate_range(end='2026-09-18', periods=60)
+    frames = []
+    for d in pd.bdate_range(end='2026-09-18', periods=10):
+        h = latest.copy()
+        h['date'] = d
+        h['real_strength_score'] = [85,80,78,72,55,45]
+        h['residual_mom_60'] = [.12,.10,.08,.05,-.01,-.02]
+        h['residual_mom_120'] = [.20,.16,.12,.08,-.02,-.03]
+        h['rs_persistence_count'] = [3,3,3,3,1,0]
+        h['path_quality_60'] = [.20,.18,.17,.15,.05,.02]
+        frames.append(h)
+    scored = pd.concat(frames, ignore_index=True)
+    latest = scored[scored['date'].eq(scored['date'].max())].copy()
+
+    price_rows = []
+    for j,ticker in enumerate(latest['ticker']):
+        for i,d in enumerate(dates):
+            close = 20+j*2+i*.05
+            price_rows.append({
+                'date':d,'ticker':ticker,'open':close-.1,'high':close+.2,
+                'low':close-.2,'close':close,'volume':1_000_000+i*1000,
+            })
+    out = tmp_path/'dashboard-watchlist.html'
+    render_dashboard(
+        latest,
+        {'regime':'NEUTRAL','market_score':50,'breadth_ma20':.5,'breadth_ma50':.5},
+        out,
+        scored_history=scored,
+        price_history=pd.DataFrame(price_rows),
+        opportunity_cfg={
+            'entry_min_real_strength_score': 99,
+            'entry_min_rs_persistence': 3,
+            'entry_require_residual_momentum': True,
+            'entry_require_medium_trend': True,
+            'entry_require_weekly_trend': True,
+        },
+    )
+    text = out.read_text(encoding='utf-8')
+    assert '0 FRESH ENTRY' in text
+    assert 'Top 3 Near Entry / Watchlist' in text
+    assert 'WATCHLIST — NOT ENTRY' in text
+    assert 'model không ép đủ Top 3' in text

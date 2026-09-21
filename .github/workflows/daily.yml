@@ -105,6 +105,7 @@ jobs:
             outputs/opportunities_long_latest.csv
             outputs/model_portfolio_10.csv
             outputs/top3_entry_candidates.csv
+            outputs/top3_entry_watchlist.csv
             outputs/entry_signal_history.csv
             outputs/entry_signal_audit.csv
             outputs/backtest/

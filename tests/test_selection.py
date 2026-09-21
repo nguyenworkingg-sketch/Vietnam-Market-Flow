@@ -6,7 +6,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
-from marketflow.selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history
+from marketflow.selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
 
 
 def test_detects_new_short_and_long_entries():
@@ -143,3 +143,30 @@ def test_entry_v4_requires_residual_strength_not_only_raw_rs():
     assert events['ticker'].tolist() == ['GOOD']
     assert events.iloc[0]['real_strength_med10'] >= 70
     assert events.iloc[0]['residual_mom_60'] > 0
+
+
+
+def test_watchlist_ranks_near_entries_and_explains_failed_gates():
+    dates = pd.bdate_range('2026-09-07', periods=10)
+    rows = []
+    for ticker, residual, weekly in [('AAA', .08, True), ('BBB', -.01, True), ('CCC', .05, False)]:
+        for i,d in enumerate(dates):
+            rows.append({
+                'date':d,'ticker':ticker,'sector':'Bank','close':30+i*.05,
+                'sector_score':80,'leadership_score':85,'real_strength_score':82,
+                'short_momentum_score':78,'long_momentum_score':82,
+                'flow_score':80,'trend_score':84,'ret_5':.03,
+                'ma20_distance':.02,'medium_trend_confirm':True,
+                'weekly_trend_confirm':weekly,'rs_60':.10,'rs_120':.15,
+                'rs_sector_60':.05,'sector_rs_60':.06,
+                'residual_mom_60':residual,'residual_mom_120':residual,
+                'rs_persistence_count':3,'stage':'LEADER',
+            })
+    out = build_entry_watchlist(
+        pd.DataFrame(rows), top_n=3, min_real_strength_score=70,
+        min_rs_persistence=2, require_residual_momentum=True,
+    )
+    assert out.iloc[0]['ticker'] == 'AAA'
+    assert out.iloc[0]['gate_fail_count'] == 0
+    assert out[out['ticker'].eq('BBB')]['gate_failures'].iloc[0].startswith('Residual')
+    assert 'Weekly trend' in out[out['ticker'].eq('CCC')]['gate_failures'].iloc[0]

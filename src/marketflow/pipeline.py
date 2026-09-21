@@ -9,7 +9,7 @@ from .scoring import build_scores, add_stage
 from .regime import market_regime
 from .storage import DuckStore
 from .dashboard import render_dashboard
-from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history
+from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
 from .supabase_store import SupabaseRESTStore
 
 
@@ -245,10 +245,26 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             squeeze_bonus=float(opp_cfg.get('entry_squeeze_bonus', 5)),
             pullback_bonus=float(opp_cfg.get('entry_pullback_bonus', 3)),
         )
+        entry_watchlist = build_entry_watchlist(
+            scored,
+            top_n=int(opp_cfg.get('entry_top_n', 3)),
+            min_sector_score=float(opp_cfg.get('entry_min_sector_score', 55)),
+            min_leadership_score=float(opp_cfg.get('entry_min_leadership_score', 70)),
+            min_short_score=float(opp_cfg.get('entry_min_short_score', 65)),
+            min_long_score=float(opp_cfg.get('entry_min_long_score', 70)),
+            min_real_strength_score=float(opp_cfg.get('entry_min_real_strength_score', 0)),
+            min_rs_persistence=int(opp_cfg.get('entry_min_rs_persistence', 0)),
+            require_residual_momentum=bool(opp_cfg.get('entry_require_residual_momentum', False)),
+            require_medium_trend=bool(opp_cfg.get('entry_require_medium_trend', True)),
+            require_weekly_trend=bool(opp_cfg.get('entry_require_weekly_trend', True)),
+            max_ma20_distance=float(opp_cfg.get('entry_max_ma20_distance', 0.08)),
+            max_ret5=float(opp_cfg.get('entry_max_ret5', 0.10)),
+        )
         short_entries.to_csv(out / 'opportunities_short_latest.csv', index=False)
         long_entries.to_csv(out / 'opportunities_long_latest.csv', index=False)
         portfolio.to_csv(out / 'model_portfolio_10.csv', index=False)
         entry_candidates.to_csv(out / 'top3_entry_candidates.csv', index=False)
+        entry_watchlist.to_csv(out / 'top3_entry_watchlist.csv', index=False)
         entry_signal_history.to_csv(out / 'entry_signal_history.csv', index=False)
 
         # Explorer audit trail: keep historical signals from prior model

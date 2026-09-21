@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history
+from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
 
 
 DISPLAY = {
@@ -50,6 +50,12 @@ DISPLAY = {
     'leadership_med10': 'Leadership 10P',
     'long_med10': 'SM dài hạn 10P',
     'sector_med10': 'Sector 10P',
+    'watch_rank': 'Hạng',
+    'watch_score': 'Watch score',
+    'gate_fail_count': 'Số gate fail',
+    'gate_failures': 'Chưa đạt',
+    'status': 'Trạng thái',
+    'close': 'Giá hiện tại',
 }
 
 STAGE_VI = {
@@ -248,18 +254,33 @@ def _candlestick_macd_svg(price_history: pd.DataFrame, ticker: str, days: int = 
     return ''.join(chunks)
 
 
-def _candidate_charts(price_history: pd.DataFrame | None, entry_candidates: pd.DataFrame, entry_events: pd.DataFrame | None = None, days: int = 126) -> str:
-    if price_history is None or price_history.empty or entry_candidates is None or entry_candidates.empty:
-        return "<div class='empty'>Chưa có ứng viên hoặc dữ liệu giá để hiển thị chart.</div>"
+def _candidate_charts(
+    price_history: pd.DataFrame | None,
+    candidates: pd.DataFrame,
+    entry_events: pd.DataFrame | None = None,
+    days: int = 126,
+    watchlist_mode: bool = False,
+) -> str:
+    if price_history is None or price_history.empty or candidates is None or candidates.empty:
+        return "<div class='empty'>Không có mã để hiển thị chart.</div>"
     cards=[]
-    for i,(_,row) in enumerate(entry_candidates.head(3).iterrows()):
+    for i,(_,row) in enumerate(candidates.head(3).iterrows()):
         ticker=str(row['ticker'])
-        setup=html.escape(str(row.get('entry_reason',row.get('technical_setup',''))))
-        score=_num(row.get('entry_score_current',row.get('entry_score')),1)
         open_attr=" open" if i==0 else ""
+        if watchlist_mode:
+            status=html.escape(str(row.get('status','WATCHLIST')))
+            failed=html.escape(str(row.get('gate_failures','')))
+            score=_num(row.get('watch_score'),1)
+            meta=f"WATCHLIST — NOT ENTRY · {status} · Watch {score}"
+            if failed:
+                meta += f" · Còn thiếu: {failed}"
+        else:
+            setup=html.escape(str(row.get('entry_reason',row.get('technical_setup',''))))
+            score=_num(row.get('entry_score_current',row.get('entry_score')),1)
+            meta=f"Điểm mở vị thế {score} · {setup}"
         cards.append(
             f"<details class='price-chart-detail'{open_attr}>"
-            f"<summary><span>#{i+1} <b>{html.escape(ticker)}</b></span><span class='chart-meta'>Điểm mở vị thế {score} · {setup}</span></summary>"
+            f"<summary><span>#{i+1} <b>{html.escape(ticker)}</b></span><span class='chart-meta'>{meta}</span></summary>"
             f"<div class='terminal-chart-wrap'>{_candlestick_macd_svg(price_history,ticker,days=days,entry_events=entry_events)}</div>"
             "</details>"
         )
@@ -476,10 +497,10 @@ def _stock_chart_explorer(
         const last=rows[rows.length-1][4];
         let s=(meta.sector||'')+' · Leadership '+fmt(meta.leadership)+' · SM NH '+fmt(meta.short)+' · SM DH '+fmt(meta.long);
         if(ev) {{
-          const tag=(ev[4]||'').startsWith('v3-')?'V4':'Legacy';
+          const tag=(ev[4]||'').startsWith('v4-')?'V4':'Legacy';
           s+=' · '+tag+' entry '+ev[0]+' @ '+fmt(ev[1])+' · hiện tại '+((last/ev[1]-1)*100>=0?'+':'')+((last/ev[1]-1)*100).toFixed(1)+'%';
         }} else if(lastAll) {{
-          const tag=(lastAll[4]||'').startsWith('v3-')?'V4':'Legacy';
+          const tag=(lastAll[4]||'').startsWith('v4-')?'V4':'Legacy';
           s+=' · Không có entry trong '+(rangeN===126?'6M':'12M')+' · gần nhất '+tag+' '+lastAll[0]+' @ '+fmt(lastAll[1]);
         }} else {{
           s+=' · Chưa từng có entry signal được lưu';
@@ -970,10 +991,62 @@ def render_dashboard(
         **entry_kwargs,
     )
     opportunity_count=len(short_entries)+len(long_entries)
-    entry_chart_html=_candidate_charts(price_history,entry_candidates,entry_signal_history,days=126)
+    entry_watchlist = build_entry_watchlist(
+        score_history,
+        top_n=int(opp_cfg.get('entry_top_n',3)),
+        min_sector_score=entry_kwargs['min_sector_score'],
+        min_leadership_score=entry_kwargs['min_leadership_score'],
+        min_short_score=entry_kwargs['min_short_score'],
+        min_long_score=entry_kwargs['min_long_score'],
+        min_real_strength_score=entry_kwargs['min_real_strength_score'],
+        min_rs_persistence=entry_kwargs['min_rs_persistence'],
+        require_residual_momentum=entry_kwargs['require_residual_momentum'],
+        require_medium_trend=entry_kwargs['require_medium_trend'],
+        require_weekly_trend=entry_kwargs['require_weekly_trend'],
+        max_ma20_distance=entry_kwargs['max_ma20_distance'],
+        max_ret5=entry_kwargs['max_ret5'],
+    )
+    if entry_candidates.empty:
+        entry_status_html = (
+            f"<div class='entry-zero'><b>0 FRESH ENTRY</b> — phiên {html.escape(dt)}. "
+            "Không có cổ phiếu nào vượt toàn bộ V4 gate; model không ép đủ Top 3.</div>"
+        )
+        entry_table_html = (
+            "<div class='watch-head'><b>Top 3 Near Entry / Watchlist</b>"
+            "<span>Chỉ để theo dõi — không phải entry signal</span></div>"
+            + _table(
+                entry_watchlist,
+                ['watch_rank','ticker','sector','status','watch_score','gate_fail_count',
+                 'gate_failures','close','real_strength_med10','residual_mom_60',
+                 'residual_mom_120','rs_persistence_count','stage'],
+                3,
+            )
+        )
+        entry_chart_html = _candidate_charts(
+            price_history, entry_watchlist, pd.DataFrame(), days=126, watchlist_mode=True
+        )
+        entry_chart_label = "Watchlist chart — NOT ENTRY"
+    else:
+        entry_status_html = (
+            f"<div class='entry-live'><b>{len(entry_candidates)} FRESH ENTRY"
+            f"{'S' if len(entry_candidates) != 1 else ''}</b> — phiên {html.escape(dt)}.</div>"
+        )
+        entry_table_html = _table(
+            entry_candidates,
+            ['entry_rank','ticker','sector','entry_date','entry_price','current_price',
+             'since_entry_pct','entry_age_sessions','entry_reason','entry_score_current',
+             'real_strength_med10','residual_mom_60','residual_mom_120',
+             'rs_persistence_count','path_quality_60','stage'],
+            3,
+        )
+        entry_chart_html = _candidate_charts(
+            price_history, entry_candidates, entry_signal_history, days=126
+        )
+        entry_chart_label = "Fresh-entry chart"
     default_chart_ticker = (
         str(entry_candidates.iloc[0]['ticker']) if not entry_candidates.empty
-        else (str(leaders.iloc[0]['ticker']) if not leaders.empty else None)
+        else (str(entry_watchlist.iloc[0]['ticker']) if not entry_watchlist.empty
+              else (str(leaders.iloc[0]['ticker']) if not leaders.empty else None))
     )
     explorer_events = (
         historical_entry_events
@@ -997,7 +1070,7 @@ def render_dashboard(
     .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:10px 0 18px}.card,.panel,.mini-card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:13px;box-shadow:0 8px 28px rgba(0,0,0,.10)}
     .card{padding:15px 16px}.card-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em}.big{font-size:27px;font-weight:780;letter-spacing:-.04em;margin-top:5px}.sub{font-size:11px;color:var(--muted);margin-top:4px}
     .section{margin-top:18px}.panel{padding:17px}.grid-2{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.grid-even{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:13px}
-    .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.section-kicker{font-size:11px;color:var(--cyan);letter-spacing:.13em;text-transform:uppercase;font-weight:700}.empty{color:var(--muted);font-size:13px;padding:24px 8px;text-align:center}
+    .section-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.entry-zero,.entry-live{padding:10px 12px;border-radius:9px;margin:10px 0 12px;font-size:12px}.entry-zero{border:1px solid rgba(242,191,85,.35);background:rgba(242,191,85,.07);color:#f6d991}.entry-live{border:1px solid rgba(69,212,131,.35);background:rgba(69,212,131,.07);color:#9ef0bd}.watch-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:12px 0 7px;color:#dfe9f8;font-size:12px}.watch-head span{color:var(--amber);font-size:11px}.section-kicker{font-size:11px;color:var(--cyan);letter-spacing:.13em;text-transform:uppercase;font-weight:700}.empty{color:var(--muted);font-size:13px;padding:24px 8px;text-align:center}
     .chart-svg{width:100%;height:auto;overflow:visible}.gridline{stroke:#20314c;stroke-width:1;stroke-dasharray:3 5}.axis,.axis-solid{stroke:#40516d;stroke-width:1}.axis{stroke-dasharray:5 5}.axis-label,.tick,.legend,.quad{fill:#8295b2;font-size:10px}.legend{fill:#adbad0}.quad{font-size:9px;letter-spacing:.08em}.quad-fill{opacity:.05}.q-good{fill:var(--green)}.q-watch{fill:var(--amber)}.q-cool{fill:var(--cyan)}.q-weak{fill:var(--rose)}
     .series{fill:none;stroke-width:2.2;vector-effect:non-scaling-stroke}.series.cyan{stroke:var(--cyan)}.series.green{stroke:var(--green)}.series.blue{stroke:var(--blue)}.series.amber{stroke:var(--amber)}.series.s1{stroke:var(--cyan)}.series.s2{stroke:var(--green)}.series.s3{stroke:var(--amber)}.series.s4{stroke:var(--violet)}.series.s5{stroke:var(--rose)}
     .bubble{fill:#7186a5;fill-opacity:.66;stroke:#c2cce0;stroke-opacity:.42}.bubble.emerging{fill:var(--amber)}.bubble.strong{fill:var(--cyan)}.bubble.hot{fill:var(--green)}.bubble-label,.point-label{fill:#dfe9f8;font-size:9px;paint-order:stroke;stroke:#07101d;stroke-width:3px;stroke-linejoin:round}
@@ -1040,8 +1113,9 @@ def render_dashboard(
       <div class='section-head'><div><div class='section-kicker'>Priority setup</div><h2>Top 3 ứng viên mở vị thế — Model</h2></div><span class='tag'>Strict technical gate</span></div>
       <div class='entry-rule'><span class='rule-pill'>Residual momentum 60/120 &gt; 0</span><span class='rule-pill'>RS vs sector &gt; 0</span><span class='rule-pill'>Sector vs market &gt; 0</span><span class='rule-pill'>≥ 2 RS horizons dương</span><span class='rule-pill'>Daily + Weekly confirm</span><span class='rule-pill'>Entry gần MA20</span><span class='rule-pill'>Anti-chase</span></div>
       <div class='note' style='margin-bottom:10px'>V4 tách <b>strength</b> khỏi <b>timing</b>: strength phải còn dương sau khi điều chỉnh market/sector, bền qua nhiều horizon và có path quality tốt; chỉ sau đó model mới chờ pullback-resume hoặc squeeze breakout. Raw RS so với VN-Index không còn đủ để một mã vượt gate.</div>
-      <div class='table-wrap'>{_table(entry_candidates,['entry_rank','ticker','sector','entry_date','entry_price','current_price','since_entry_pct','entry_age_sessions','entry_reason','entry_score_current','real_strength_med10','residual_mom_60','residual_mom_120','rs_persistence_count','path_quality_60','stage'],3)}</div>
-      <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>6-month technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>~126 phiên</span></div>
+      {entry_status_html}
+      <div class='table-wrap'>{entry_table_html}</div>
+      <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>6-month technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>{entry_chart_label} · ~126 phiên</span></div>
       {entry_chart_html}
     </div>
 
