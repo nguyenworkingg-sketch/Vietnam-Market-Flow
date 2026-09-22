@@ -359,7 +359,8 @@ def stop_sensitivity_study(
         return pd.DataFrame()
     base = simulate_position_lifecycle(
         price_history, scored_history, entries,
-        {'adaptive_volatility': False, 'hard_stop_pct': 0.99, 'profit_arm_pct': 99.0,
+        {'adaptive_volatility': False, 'use_structural_stop': False,
+         'hard_stop_pct': 0.99, 'profit_arm_pct': 99.0,
          'min_profit_arm_pct': 99.0, 'max_profit_arm_pct': 99.0, 'strength_break_votes': 99}
     )
     baseline = base.set_index(['signal_date','ticker'])['no_stop_return'].to_dict() if not base.empty else {}
@@ -368,7 +369,8 @@ def stop_sensitivity_study(
     for stop in stop_grid:
         sim = simulate_position_lifecycle(
             price_history, scored_history, entries,
-            {'adaptive_volatility': False, 'hard_stop_pct': stop,
+            {'adaptive_volatility': False, 'use_structural_stop': False,
+             'hard_stop_pct': stop,
              'min_profit_arm_pct': 99.0, 'max_profit_arm_pct': 99.0, 'strength_break_votes': 99}
         )
         if sim.empty:
