@@ -155,8 +155,10 @@ def test_professional_dashboard_renders_core_charts(tmp_path):
     assert 'MACD (12,26,9)' in text
     assert 'Biểu đồ kỹ thuật toàn bộ cổ phiếu' in text
     assert 'Cut loss nhanh · Gồng lời theo Strength' in text
-    assert 'ATR-adaptive' in text
+    assert 'Structure + ATR' in text
     assert 'ATR20 %' in text
+    assert 'Risk mode' in text
+    assert 'Struct stop' in text
     assert 'Risk / Exit' in text
     assert "id='stock-chart-select'" in text
     assert "id='stock-chart-range'" in text

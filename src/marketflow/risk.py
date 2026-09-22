@@ -62,6 +62,32 @@ def _entry_risk_params(signal_row: pd.Series | None, cfg: dict) -> dict:
     else:
         stop_pct = base_stop
 
+    close = _num(signal_row.get('close')) if signal_row is not None else np.nan
+    prior_low = np.nan
+    for col in ['prior_low_10','prior_low_20']:
+        v = _num(signal_row.get(col)) if signal_row is not None else np.nan
+        if np.isfinite(v) and v > 0:
+            prior_low = v
+            break
+    structure_level = np.nan
+    if bool(cfg.get('use_structural_stop', True)) and np.isfinite(prior_low):
+        buffer_abs = 0.0
+        if np.isfinite(atr_pct) and np.isfinite(close):
+            buffer_abs = float(cfg.get('structure_buffer_atr', 0.25)) * atr_pct * close
+        structure_level = prior_low - buffer_abs
+
+    return {
+        'adaptive': adaptive,
+        'adaptive_used': adaptive_used,
+        'atr_pct': atr_pct,
+        'atr_regime_ratio': atr_regime,
+        'atr_stop_pct': stop_pct,
+        'prior_low': prior_low,
+        'structure_level': structure_level,
+    }
+
+
+def _profit_params(stop_pct: float, cfg: dict) -> tuple[float, float]:
     legacy_arm = cfg.get('profit_arm_pct')
     arm_lo = float(cfg.get('min_profit_arm_pct', legacy_arm if legacy_arm is not None else 0.10))
     arm_hi = float(cfg.get('max_profit_arm_pct', legacy_arm if legacy_arm is not None else 0.22))
@@ -76,15 +102,7 @@ def _entry_risk_params(signal_row: pd.Series | None, cfg: dict) -> dict:
         max(floor_lo, float(cfg.get('profit_floor_r', 0.30)) * stop_pct),
         floor_lo, max(floor_lo, floor_hi),
     )
-    return {
-        'adaptive': adaptive,
-        'adaptive_used': adaptive_used,
-        'atr_pct': atr_pct,
-        'atr_regime_ratio': atr_regime,
-        'stop_pct': stop_pct,
-        'profit_arm_pct': profit_arm,
-        'profit_floor_pct': profit_floor,
-    }
+    return profit_arm, profit_floor
 
 
 def _trail_pct(atr_pct: float, cfg: dict) -> float:
@@ -157,10 +175,23 @@ def simulate_position_lifecycle(
             continue
 
         fill_date = pd.Timestamp(first['date'])
-        stop_pct = params['stop_pct']
-        profit_arm = params['profit_arm_pct']
-        profit_floor = params['profit_floor_pct']
+        atr_stop_pct = float(params['atr_stop_pct'])
+        structural_stop_pct = np.nan
+        structure_level = params.get('structure_level', np.nan)
+        if np.isfinite(structure_level) and 0 < structure_level < fill_price:
+            structural_stop_pct = 1.0 - structure_level / fill_price
+
+        raw_stop_pct = atr_stop_pct
+        if np.isfinite(structural_stop_pct):
+            raw_stop_pct = max(raw_stop_pct, structural_stop_pct)
+
+        max_stop_pct = float(cfg.get('max_stop_pct', 0.12))
+        stop_pct = min(raw_stop_pct, max_stop_pct)
+        risk_too_wide = bool(raw_stop_pct > max_stop_pct + 1e-12)
+        profit_arm, profit_floor = _profit_params(stop_pct, cfg)
         hard_level = fill_price * (1.0 - stop_pct)
+        reference_stop = float(cfg.get('reference_position_stop_pct', 0.05))
+        position_size_factor = min(1.0, reference_stop / stop_pct) if stop_pct > 0 else 1.0
 
         peak_close = fill_price
         peak_date = fill_date
@@ -290,10 +321,20 @@ def simulate_position_lifecycle(
             'peak_date': peak_date,
             'peak_return': peak_return,
             'drawdown_from_peak': drawdown_from_peak,
-            'risk_mode': 'ATR_ADAPTIVE' if params['adaptive_used'] else 'FIXED_FALLBACK',
+            'risk_mode': (
+                'STRUCTURE_ATR' if np.isfinite(structural_stop_pct)
+                else ('ATR_ADAPTIVE' if params['adaptive_used'] else 'FIXED_FALLBACK')
+            ),
             'atr_pct_at_entry': params['atr_pct'],
             'atr_regime_ratio_at_entry': params['atr_regime_ratio'],
+            'atr_stop_pct': atr_stop_pct,
+            'structural_stop_pct': structural_stop_pct,
+            'raw_required_stop_pct': raw_stop_pct,
             'adaptive_stop_pct': stop_pct,
+            'risk_too_wide': risk_too_wide,
+            'prior_low_at_entry': params.get('prior_low', np.nan),
+            'structure_stop_level': structure_level,
+            'position_size_factor_vs_5pct': position_size_factor,
             'profit_arm_pct_used': profit_arm,
             'profit_floor_pct_used': profit_floor,
             'trail_pct_current': latest_trail_pct,
@@ -318,7 +359,8 @@ def stop_sensitivity_study(
         return pd.DataFrame()
     base = simulate_position_lifecycle(
         price_history, scored_history, entries,
-        {'adaptive_volatility': False, 'hard_stop_pct': 0.99, 'profit_arm_pct': 99.0,
+        {'adaptive_volatility': False, 'use_structural_stop': False,
+         'hard_stop_pct': 0.99, 'profit_arm_pct': 99.0,
          'min_profit_arm_pct': 99.0, 'max_profit_arm_pct': 99.0, 'strength_break_votes': 99}
     )
     baseline = base.set_index(['signal_date','ticker'])['no_stop_return'].to_dict() if not base.empty else {}
@@ -327,7 +369,8 @@ def stop_sensitivity_study(
     for stop in stop_grid:
         sim = simulate_position_lifecycle(
             price_history, scored_history, entries,
-            {'adaptive_volatility': False, 'hard_stop_pct': stop,
+            {'adaptive_volatility': False, 'use_structural_stop': False,
+             'hard_stop_pct': stop,
              'min_profit_arm_pct': 99.0, 'max_profit_arm_pct': 99.0, 'strength_break_votes': 99}
         )
         if sim.empty:
@@ -370,6 +413,7 @@ def risk_policy_comparison(
     policies = {
         'FIXED_5PCT': {
             'adaptive_volatility': False,
+            'use_structural_stop': False,
             'hard_stop_pct': 0.05,
             'peak_trail_pct': 0.07,
             'min_profit_arm_pct': 0.08,
@@ -380,7 +424,8 @@ def risk_policy_comparison(
             'profit_floor_r': 0.0,
             'strength_break_votes': 2,
         },
-        'ATR_ADAPTIVE': dict(adaptive_cfg or {}),
+        'ATR_ADAPTIVE': dict(adaptive_cfg or {}, use_structural_stop=False),
+        'STRUCTURE_ATR': dict(adaptive_cfg or {}, use_structural_stop=True),
     }
     rows = []
     for name, cfg in policies.items():
