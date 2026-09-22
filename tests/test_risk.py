@@ -145,3 +145,54 @@ def test_atr_adaptive_stop_widens_for_high_volatility_stock():
     assert high['status']=='OPEN'
     assert abs(low['profit_arm_pct_used']-.10) < 1e-9
     assert abs(high['profit_arm_pct_used']-.15) < 1e-9
+
+
+
+def test_structure_stop_avoids_bvh_style_false_cut_before_breakout():
+    dates = pd.bdate_range('2025-12-08', periods=10)
+    entry = pd.DataFrame([{
+        'entry_date': dates[0], 'ticker':'BVH', 'sector':'Bảo hiểm',
+        'entry_reason':'SM ngắn hạn vượt 80'
+    }])
+    # Signal-day context resembles BVH 08/12/2025: ATR ~2.7%, recent base low
+    # around 50.4, then a shakeout toward 51 before a strong advance.
+    closes = [55.6,55.0,54.3,54.6,52.0,52.7,53.4,53.4,54.0,56.0]
+    lows   = [52.0,54.2,53.1,53.4,52.0,51.6,51.0,53.0,52.3,53.7]
+    rows=[]
+    for i,d in enumerate(dates):
+        rows.append({
+            'date':d,'ticker':'BVH','open':56.5 if i==1 else closes[i],
+            'high':max(closes[i]+1,lows[i]+1),'low':lows[i],'close':closes[i],
+            'atr_pct_20':.0270413669,'atr_regime_ratio':.91,
+            'prior_low_10':50.4,'prior_low_20':50.4,
+            'ma20':52.0,'ma20_slope_5':.01,'weekly_trend_confirm':True,
+        })
+    px=pd.DataFrame(rows)
+    scores=px[['date','ticker']].copy()
+    scores['real_strength_score']=80
+    scores['leadership_score']=80
+    scores['trend_score']=80
+
+    atr_only=simulate_position_lifecycle(
+        px,scores,entry,
+        {'adaptive_volatility':True,'use_structural_stop':False,
+         'stop_atr_multiple':2.0,'min_stop_pct':.05,'max_stop_pct':.12,
+         'min_profit_arm_pct':.10,'max_profit_arm_pct':.22,'profit_arm_r':1.5,
+         'strength_break_votes':2}
+    ).iloc[0]
+    structure=simulate_position_lifecycle(
+        px,scores,entry,
+        {'adaptive_volatility':True,'use_structural_stop':True,
+         'structure_buffer_atr':.25,'stop_atr_multiple':2.0,
+         'min_stop_pct':.05,'max_stop_pct':.12,
+         'reference_position_stop_pct':.05,
+         'min_profit_arm_pct':.10,'max_profit_arm_pct':.22,'profit_arm_r':1.5,
+         'strength_break_votes':2}
+    ).iloc[0]
+
+    assert atr_only['status']=='CLOSED'
+    assert structure['status']=='OPEN'
+    assert structure['risk_mode']=='STRUCTURE_ATR'
+    assert structure['structural_stop_pct'] > structure['atr_stop_pct']
+    assert .10 < structure['adaptive_stop_pct'] < .12
+    assert structure['position_size_factor_vs_5pct'] < .5
