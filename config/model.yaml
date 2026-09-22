@@ -112,8 +112,11 @@ risk_management:
   adaptive_volatility: true
   hard_stop_pct: 0.05          # fallback only when ATR is unavailable
   stop_atr_multiple: 2.00
+  use_structural_stop: true
+  structure_buffer_atr: 0.25
   min_stop_pct: 0.05
   max_stop_pct: 0.12
+  reference_position_stop_pct: 0.05
   profit_arm_r: 1.50
   min_profit_arm_pct: 0.10
   max_profit_arm_pct: 0.22
