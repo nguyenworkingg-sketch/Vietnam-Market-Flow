@@ -80,6 +80,14 @@ DISPLAY = {
     'entry_pullback_band': 'Pullback band %',
     'entry_local_ma20_cap': 'MA20 cap %',
     'entry_local_ret5_cap': '5D cap %',
+    'risk_mode': 'Risk mode',
+    'atr_stop_pct': 'ATR stop %',
+    'structural_stop_pct': 'Structure stop %',
+    'raw_required_stop_pct': 'Required stop %',
+    'prior_low_at_entry': 'Prior low',
+    'structure_stop_level': 'Structure stop px',
+    'position_size_factor_vs_5pct': 'Size vs 5% stop',
+    'risk_too_wide': 'Risk quá rộng',
 }
 
 STAGE_VI = {
@@ -106,7 +114,7 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
     if d.empty:
         return "<div class='empty'>Chưa có dữ liệu phù hợp.</div>"
     for c in d.select_dtypes(include='number').columns:
-        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak','atr_pct_at_entry','adaptive_stop_pct','profit_arm_pct_used','profit_floor_pct_used','trail_pct_current','atr_pct_20','entry_pullback_band','entry_local_ma20_cap','entry_local_ret5_cap'}:
+        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak','atr_pct_at_entry','adaptive_stop_pct','atr_stop_pct','structural_stop_pct','raw_required_stop_pct','profit_arm_pct_used','profit_floor_pct_used','trail_pct_current','atr_pct_20','entry_pullback_band','entry_local_ma20_cap','entry_local_ret5_cap','position_size_factor_vs_5pct'}:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{100*v:+.1f}%')
         else:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
@@ -412,6 +420,14 @@ def _stock_chart_explorer(
                     clean(r.get('profit_arm_pct_used')),
                     clean(r.get('trail_pct_current')),
                     clean(r.get('atr_regime_ratio_at_entry')),
+                    str(r.get('risk_mode','')),
+                    clean(r.get('atr_stop_pct')),
+                    clean(r.get('structural_stop_pct')),
+                    clean(r.get('raw_required_stop_pct')),
+                    clean(r.get('prior_low_at_entry')),
+                    clean(r.get('structure_stop_level')),
+                    clean(r.get('position_size_factor_vs_5pct')),
+                    bool(r.get('risk_too_wide', False)),
                 ]
                 for _,r in g.tail(8).iterrows()
             ]
@@ -511,7 +527,7 @@ def _stock_chart_explorer(
           const life=lifeMap[e[0]+'|'+e[4]];
           const model=modelTag(e[4]);
           const isCurrent=(e[4]||'').startsWith('v4-');
-          let status='AUDIT ONLY',action='—',fillDate='—',fillPrice='—',exitDate='—',exitPrice='—',rulePL='—',noStop='—',stop='—',exitReason='—',atr='—',stopPct='—',armPct='—',trailPct='—',atrReg='—';
+          let status='AUDIT ONLY',action='—',fillDate='—',fillPrice='—',exitDate='—',exitPrice='—',rulePL='—',noStop='—',stop='—',exitReason='—',atr='—',stopPct='—',armPct='—',trailPct='—',atrReg='—',riskMode='—',atrStop='—',structStop='—',priorLow='—',sizeFactor='—';
           let lifeRet=null;
           if(life) {{
             fillDate=shortDate(life[2]); fillPrice=fmt(life[3],2);
@@ -519,6 +535,7 @@ def _stock_chart_explorer(
             exitDate=shortDate(life[6]); exitPrice=fmt(life[7],2);
             exitReason=life[8]||'—'; lifeRet=life[9]; rulePL=pct(life[9]); noStop=pct(life[10]); stop=fmt(life[11],2);
             atr=pct(life[12]); stopPct=pct(life[13]); armPct=pct(life[14]); trailPct=pct(life[15]); atrReg=fmt(life[16],2);
+            riskMode=life[17]||'—'; atrStop=pct(life[18]); structStop=pct(life[19]); priorLow=fmt(life[21],2); sizeFactor=pct(life[23]);
           }}
           const statusCls=status==='CLOSED'?'hist-closed':(status==='OPEN'?'hist-open':(status==='EXIT_NEXT_OPEN'?'hist-exit':''));
           body+='<tr>'+
@@ -534,9 +551,14 @@ def _stock_chart_explorer(
             '<td>'+esc(exitPrice)+'</td>'+
             '<td class="'+(Number(lifeRet)>=0?'hist-pos':'hist-neg')+'"><b>'+esc(rulePL)+'</b></td>'+
             '<td>'+esc(noStop)+'</td>'+
+            '<td>'+esc(riskMode)+'</td>'+
             '<td>'+esc(atr)+'</td>'+
             '<td>'+esc(atrReg)+'</td>'+
+            '<td>'+esc(atrStop)+'</td>'+
+            '<td>'+esc(structStop)+'</td>'+
             '<td>'+esc(stopPct)+'</td>'+
+            '<td>'+esc(priorLow)+'</td>'+
+            '<td>'+esc(sizeFactor)+'</td>'+
             '<td>'+esc(armPct)+'</td>'+
             '<td>'+esc(trailPct)+'</td>'+
             '<td>'+esc(stop)+'</td>'+
@@ -548,7 +570,7 @@ def _stock_chart_explorer(
             '<th>Signal</th><th>Model</th><th>Trigger</th><th>Signal px</th>'+
             '<th>Fill T+1</th><th>Fill px</th><th>Status</th><th>Action</th>'+
             '<th>Exit</th><th>Exit px</th><th>P/L rule</th><th>P/L nếu giữ</th>'+
-            '<th>ATR20 %</th><th>ATR regime</th><th>Stop %</th><th>Arm %</th><th>Trail %</th>'+
+            '<th>Risk mode</th><th>ATR20 %</th><th>ATR regime</th><th>ATR stop</th><th>Struct stop</th><th>Stop %</th><th>Prior low</th><th>Size vs 5%</th><th>Arm %</th><th>Trail %</th>'+
             '<th>Stop px</th><th>Lý do exit</th>'+
           '</tr></thead><tbody>'+body+'</tbody></table>';
       }}
@@ -1260,7 +1282,9 @@ def render_dashboard(
             position_monitor.sort_values(['status','signal_date']),
             ['ticker','signal_date','fill_date','fill_price','action','status',
              'lifecycle_return','no_stop_return','peak_return','drawdown_from_peak',
-             'atr_pct_at_entry','atr_regime_ratio_at_entry','adaptive_stop_pct',
+             'risk_mode','atr_pct_at_entry','atr_regime_ratio_at_entry',
+             'atr_stop_pct','structural_stop_pct','adaptive_stop_pct',
+             'prior_low_at_entry','position_size_factor_vs_5pct',
              'profit_arm_pct_used','trail_pct_current','protective_stop',
              'strength_break_votes','exit_reason'],
             20,
@@ -1374,7 +1398,7 @@ def render_dashboard(
 
     <div class='panel section' id='position-risk'>
       <div class='section-head'><div><div class='section-kicker'>Position management</div><h2>Cut loss nhanh · Gồng lời theo Strength</h2></div><span class='tag'>T+1 execution · causal</span></div>
-      <div class='note'>Risk hiện là <b>ATR-adaptive</b>, không còn một stop % cho mọi mã. Initial stop = <b>{float(risk_cfg.get('stop_atr_multiple',2.0)):.1f}× ATR20</b>, kẹp trong khoảng <b>{100*float(risk_cfg.get('min_stop_pct',0.05)):.0f}%–{100*float(risk_cfg.get('max_stop_pct',0.12)):.0f}%</b>. Profit protection chỉ được arm sau tối thiểu <b>+{100*float(risk_cfg.get('min_profit_arm_pct',0.10)):.0f}%</b> hoặc khoảng <b>{float(risk_cfg.get('profit_arm_r',1.5)):.1f}R</b>; trailing cũng co/giãn theo <b>{float(risk_cfg.get('trail_atr_multiple',2.5)):.1f}× ATR20</b> với biên <b>{100*float(risk_cfg.get('min_trail_pct',0.08)):.0f}%–{100*float(risk_cfg.get('max_trail_pct',0.18)):.0f}%</b>. Stop chỉ ratchet lên, không nới xuống sau khi đã khóa lợi nhuận. Strength break vẫn có quyền thoát ở open phiên kế tiếp để tránh trả winner về entry.</div>
+      <div class='note'>Risk hiện là <b>Structure + ATR</b>, không còn đặt stop chỉ theo một % hoặc chỉ theo ATR. Initial stop lấy biên rộng hơn giữa <b>{float(risk_cfg.get('stop_atr_multiple',2.0)):.1f}× ATR20</b> và vùng dưới <b>recent swing low</b> (buffer {float(risk_cfg.get('structure_buffer_atr',0.25)):.2f}×ATR), sau đó kẹp trong khoảng <b>{100*float(risk_cfg.get('min_stop_pct',0.05)):.0f}%–{100*float(risk_cfg.get('max_stop_pct',0.12)):.0f}%</b>. Vị thế có stop rộng sẽ tự giảm size để giữ money-risk tương đương stop chuẩn {100*float(risk_cfg.get('reference_position_stop_pct',0.05)):.0f}%. Profit protection chỉ được arm sau tối thiểu <b>+{100*float(risk_cfg.get('min_profit_arm_pct',0.10)):.0f}%</b> hoặc khoảng <b>{float(risk_cfg.get('profit_arm_r',1.5)):.1f}R</b>; trailing cũng co/giãn theo <b>{float(risk_cfg.get('trail_atr_multiple',2.5)):.1f}× ATR20</b> với biên <b>{100*float(risk_cfg.get('min_trail_pct',0.08)):.0f}%–{100*float(risk_cfg.get('max_trail_pct',0.18)):.0f}%</b>. Stop chỉ ratchet lên, không nới xuống sau khi đã khóa lợi nhuận. Strength break vẫn có quyền thoát ở open phiên kế tiếp để tránh trả winner về entry.</div>
       {position_status_html}
       <div class='table-wrap'>{position_table_html}</div>
       <details style='margin-top:12px'><summary>Stop-loss sensitivity — chưa dùng để tối ưu tham số</summary><div class='table-wrap' style='margin-top:10px'>{risk_sensitivity_html}</div><div class='note'>Sample V4 hiện còn nhỏ; bảng này dùng để phát hiện false-stop và rescued loser, không chọn threshold chỉ vì backtest đẹp nhất.</div></details>
@@ -1382,7 +1406,7 @@ def render_dashboard(
 
     <div class='panel section' id='chart-explorer'>
       <div class='section-head'><div><div class='section-kicker'>Stock chart explorer</div><h2>Biểu đồ kỹ thuật toàn bộ cổ phiếu</h2></div><span class='tag'>6M / 12M · Versioned history</span></div>
-      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V4 hiện tại hiển thị màu xanh. V2/V3 màu vàng là <b>tín hiệu lịch sử để audit</b>, không phải vị thế còn mở. Mỗi tín hiệu lịch sử được replay theo rule quản trị rủi ro hiện tại: fill T+1, ATR-adaptive stop/cut loss, volatility-adaptive trailing profit và strength-break exit; chart sẽ đánh dấu điểm CUT/EXIT thay vì kéo P/L từ entry tới giá hiện tại.</div>
+      <div class='note' style='margin-bottom:10px'>Chọn bất kỳ mã nào trong universe hiện tại để xem nến, volume, MA20/MA50, Bollinger Bands, MACD và lịch sử entry đã được lưu. Entry V4 hiện tại hiển thị màu xanh. V2/V3 màu vàng là <b>tín hiệu lịch sử để audit</b>, không phải vị thế còn mở. Mỗi tín hiệu lịch sử được replay theo rule quản trị rủi ro hiện tại: fill T+1, Structure+ATR stop/cut loss, volatility-adaptive trailing profit và strength-break exit; chart sẽ đánh dấu điểm CUT/EXIT thay vì kéo P/L từ entry tới giá hiện tại.</div>
       {stock_explorer_html}
     </div>
 
