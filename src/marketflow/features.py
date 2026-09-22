@@ -125,6 +125,8 @@ def add_stock_features(prices: pd.DataFrame, benchmark: pd.DataFrame) -> pd.Data
     p['drawdown_60'] = _safe_div(p['close'], g['close'].transform(lambda s: s.rolling(60, min_periods=20).max())) - 1
     p['prior_high_10'] = g['high'].transform(lambda s: s.shift(1).rolling(10, min_periods=5).max())
     p['prior_high_20'] = g['high'].transform(lambda s: s.shift(1).rolling(20, min_periods=10).max())
+    p['prior_low_10'] = g['low'].transform(lambda s: s.shift(1).rolling(10, min_periods=5).min())
+    p['prior_low_20'] = g['low'].transform(lambda s: s.shift(1).rolling(20, min_periods=10).min())
 
     # Technical confirmation layer used only for the entry-candidate screen.
     # MACD uses standard 12/26 EMAs with a 9-period signal line.
