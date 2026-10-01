@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
-      - run: pip install -r requirements.txt
+      - run: pip install --extra-index-url https://vnstocks.com/api/simple -r requirements.txt
       - run: pytest -q
 
   smoke-live:
@@ -48,7 +48,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
-      - run: pip install -r requirements.txt
+      - run: pip install --extra-index-url https://vnstocks.com/api/simple -r requirements.txt
       - name: Vnstock live smoke test
         run: python scripts/run_daily.py --provider vnstock --symbols FPT,VCB,GAS,POW --start 2026-01-01
       - uses: actions/upload-artifact@v4
@@ -80,7 +80,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
-      - run: pip install -r requirements.txt
+      - run: pip install --extra-index-url https://vnstocks.com/api/simple -r requirements.txt
       - name: Build daily signals
         run: python scripts/run_daily.py --provider vnstock
       - name: Validate production data quality
