@@ -6,7 +6,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
-from marketflow.selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
+from marketflow.selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist, build_fast_trade_signal_history, build_fast_trade_candidates
 
 
 def test_detects_new_short_and_long_entries():
@@ -206,3 +206,32 @@ def test_local_entry_band_is_wider_for_high_atr_stock():
     row=events.iloc[0]
     assert row['entry_local_ma20_cap'] > .07
     assert abs(row['atr_pct_20']-.05) < 1e-9
+
+
+
+def test_fast_trade_can_trigger_without_long_term_rs_confirmation():
+    dates = pd.bdate_range('2026-10-01', periods=6)
+    rows=[]
+    for i,d in enumerate(dates):
+        close=20+i*.15
+        rows.append({
+            'date':d,'ticker':'FAST','sector':'Công nghệ','close':close,
+            'ma20':19.5+i*.05,'ma20_distance':close/(19.5+i*.05)-1,
+            'ma20_slope_5':.01,'ret_5':.04,'short_momentum_score':80,
+            'leadership_score':68,'flow_score':72,'trend_score':70,'sector_score':55,
+            'acceleration':10 if i==5 else 3,'volume_ratio_20':1.2,
+            'macd_hist':.12,'prior_high_10':20.6 if i==5 else 99,
+            'atr_pct_20':.03,'prior_low_10':18.8,'stage':'EMERGING',
+            # Explicitly weak long-horizon fields: the fast engine should not care.
+            'rs_60':-.05,'rs_120':-.10,'weekly_trend_confirm':False,
+            'long_momentum_score':40,
+        })
+    hist=pd.DataFrame(rows)
+    events=build_fast_trade_signal_history(hist)
+    assert len(events)>=1
+    assert events.iloc[-1]['ticker']=='FAST'
+    assert events.iloc[-1]['fast_setup'] in {'FAST BREAKOUT','MOMENTUM IGNITION'}
+    cands=build_fast_trade_candidates(hist,top_n=3,max_age_sessions=1)
+    assert not cands.empty
+    assert cands.iloc[0]['status']=='TRADE NOW'
+    assert cands.iloc[0]['fast_stop_pct'] > 0
