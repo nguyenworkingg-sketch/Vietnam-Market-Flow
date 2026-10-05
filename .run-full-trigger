@@ -1,2 +1,3 @@
-Fast Trade actionable-state refresh
-Triggered: 2026-10-05 16:43 Asia/Ho_Chi_Minh
+Fast Trade v1.2 quality-gated rebuild
+Triggered: 2026-10-05 16:58 Asia/Ho_Chi_Minh
+Rule: Pullback Reclaim + quality tiers + Fast Score >= 75 for High Conviction
