@@ -833,6 +833,10 @@ def build_fast_trade_candidates(
     scored_history: pd.DataFrame,
     top_n: int = 5,
     max_age_sessions: int = 1,
+    buy_zone_stop_fraction: float = 0.50,
+    min_buy_zone_pct: float = 0.015,
+    max_buy_zone_pct: float = 0.04,
+    trade_now_setups: tuple[str, ...] = ('PULLBACK RECLAIM',),
     **kwargs,
 ) -> pd.DataFrame:
     """Return current short-horizon setups; less restrictive than V4 swing entries."""
@@ -872,12 +876,60 @@ def build_fast_trade_candidates(
         - 2*out['entry_age_sessions']
         - 35*out['since_entry_pct'].clip(lower=0)
     )
-    out=out.sort_values(['fast_rank_score','fast_score'],ascending=False).head(int(top_n)).reset_index(drop=True)
+
+    # Execution layer is deliberately stricter than signal generation.
+    # Fast-v1 diagnostics showed breakout/ignition signals were weak on average,
+    # while pullback-reclaim was materially less poor. Therefore only explicitly
+    # allowed setup classes can become TRADE NOW; other fresh signals remain
+    # visible as research watch items instead of being mislabeled as buys.
+    stop_pct=pd.to_numeric(out['fast_stop_pct'],errors='coerce')
+    out['fast_buy_zone_pct']=(
+        stop_pct.mul(float(buy_zone_stop_fraction))
+        .clip(lower=float(min_buy_zone_pct), upper=float(max_buy_zone_pct))
+    )
+    entry_px=pd.to_numeric(out['entry_price'],errors='coerce')
+    current_px=pd.to_numeric(out['current_price'],errors='coerce')
+    out['fast_buy_max']=entry_px*(1+out['fast_buy_zone_pct'])
+    out['fast_stop_level']=entry_px*(1-stop_pct)
+
+    short_now=pd.to_numeric(
+        out.get('short_momentum_score_current',out.get('short_momentum_score')),
+        errors='coerce',
+    )
+    ma20_now=pd.to_numeric(
+        out.get('ma20_distance_current',out.get('ma20_distance')),
+        errors='coerce',
+    )
+    broken=(
+        current_px.le(out['fast_stop_level'])
+        | short_now.lt(55)
+        | ma20_now.lt(-0.02)
+    ).fillna(False)
+    tradeable_setup=out['fast_setup'].astype(str).isin(set(trade_now_setups))
+    inside_buy_zone=current_px.le(out['fast_buy_max']).fillna(False)
+    out['status']=np.select(
+        [
+            broken,
+            tradeable_setup & inside_buy_zone,
+            tradeable_setup & ~inside_buy_zone,
+        ],
+        ['BROKEN','TRADE NOW','WAIT PULLBACK'],
+        default='WATCH ONLY',
+    )
+    out=out[out['status'].ne('BROKEN')].copy()
+    status_priority=out['status'].map({'TRADE NOW':0,'WAIT PULLBACK':1,'WATCH ONLY':2}).fillna(3)
+    out=(
+        out.assign(_status_priority=status_priority)
+        .sort_values(['_status_priority','fast_rank_score','fast_score'],ascending=[True,False,False])
+        .head(int(top_n))
+        .drop(columns=['_status_priority'])
+        .reset_index(drop=True)
+    )
     out['fast_rank']=out.index+1
-    out['status']='TRADE NOW'
     cols=[
-        'fast_rank','ticker','sector','status','fast_setup','fast_rank_score','entry_date',
-        'entry_price','current_price','since_entry_pct','fast_stop_pct','fast_target_1r','fast_target_2r',
+        'fast_rank','ticker','sector','status','fast_setup','fast_rank_score','entry_date','entry_age_sessions',
+        'entry_price','current_price','since_entry_pct','fast_buy_max','fast_buy_zone_pct',
+        'fast_stop_level','fast_stop_pct','fast_target_1r','fast_target_2r',
         'short_momentum_score_current','leadership_score_current','flow_score_current','trend_score_current',
         'sector_score_current','acceleration','ma20_distance_current','ret_5_current','volume_ratio_20',
         'atr_pct_20','stage_current',
