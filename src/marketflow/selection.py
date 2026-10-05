@@ -905,19 +905,44 @@ def build_fast_trade_candidates(
         | short_now.lt(55)
         | ma20_now.lt(-0.02)
     ).fillna(False)
-    tradeable_setup=out['fast_setup'].astype(str).isin(set(trade_now_setups))
+    setup=out['fast_setup'].astype(str)
+    tradeable_setup=setup.isin(set(trade_now_setups))
+    breakout_setup=setup.eq('FAST BREAKOUT')
+    ignition_setup=setup.eq('MOMENTUM IGNITION')
     inside_buy_zone=current_px.le(out['fast_buy_max']).fillna(False)
     out['status']=np.select(
         [
             broken,
             tradeable_setup & inside_buy_zone,
             tradeable_setup & ~inside_buy_zone,
+            breakout_setup & inside_buy_zone,
+            breakout_setup & ~inside_buy_zone,
+            ignition_setup & inside_buy_zone,
+            ignition_setup & ~inside_buy_zone,
         ],
-        ['BROKEN','TRADE NOW','WAIT PULLBACK'],
+        [
+            'BROKEN',
+            'TRADE NOW',
+            'WAIT PULLBACK',
+            'RETEST READY',
+            'WAIT RETEST',
+            'CONFIRM MOMENTUM',
+            'WAIT COOL-OFF',
+        ],
         default='WATCH ONLY',
     )
     out=out[out['status'].ne('BROKEN')].copy()
-    status_priority=out['status'].map({'TRADE NOW':0,'WAIT PULLBACK':1,'WATCH ONLY':2}).fillna(3)
+    # Non-pullback setups stay non-buy signals, but now carry a concrete next
+    # action instead of the unhelpful generic WATCH ONLY label.
+    status_priority=out['status'].map({
+        'TRADE NOW':0,
+        'RETEST READY':1,
+        'CONFIRM MOMENTUM':2,
+        'WAIT PULLBACK':3,
+        'WAIT RETEST':4,
+        'WAIT COOL-OFF':5,
+        'WATCH ONLY':6,
+    }).fillna(7)
     out=(
         out.assign(_status_priority=status_priority)
         .sort_values(['_status_priority','fast_rank_score','fast_score'],ascending=[True,False,False])
