@@ -110,12 +110,19 @@ fast_trade:
   # Parallel 3-10 session engine. It is intentionally faster than the V4 swing
   # model and does not require RS60/120, weekly trend or long-momentum persistence.
   enabled: true
-  model_version: fast-v1.1-execution-2026-10-05
+  model_version: fast-v1.2-quality-gated-2026-10-05
   top_n: 5
   max_age_sessions: 1
   # Execution policy is intentionally stricter than signal discovery.
   trade_now_setups:
     - PULLBACK RECLAIM
+  # Backtest-calibrated execution tiers. High Conviction combines timing with
+  # strong stock/flow/sector quality; weaker pullbacks remain visible but are
+  # not labeled as immediate buys.
+  quality_min_fast_score: 75
+  quality_min_leadership: 80
+  quality_min_flow: 70
+  quality_min_sector: 60
   buy_zone_stop_fraction: 0.50
   min_buy_zone_pct: 0.015
   max_buy_zone_pct: 0.04
