@@ -9,7 +9,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
-from marketflow.backtest import run_research_suite, entry_signal_study
+from marketflow.backtest import run_research_suite, entry_signal_study, add_forward_returns
 from marketflow.selection import build_fast_trade_signal_history, build_fast_trade_candidates
 from marketflow.dashboard import render_dashboard
 
@@ -105,8 +105,9 @@ def main():
             max_ma20_distance=float(fast_cfg.get('max_ma20_distance',.12)),
             max_ret5=float(fast_cfg.get('max_ret5',.18)),
         )
+    fast_prepared = add_forward_returns(panel, horizons=(3,5,10))
     fast_summary = entry_signal_study(
-        suite['prepared'], fast_history, horizons=(3,5,10)
+        fast_prepared, fast_history, horizons=(3,5,10)
     ) if fast_history is not None and not fast_history.empty else pd.DataFrame()
     fast_summary.to_csv(out/'fast_trade_summary.csv', index=False)
     bt_payload['fast_trade_summary'] = fast_summary
