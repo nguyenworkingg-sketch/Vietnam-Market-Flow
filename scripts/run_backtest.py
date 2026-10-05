@@ -98,6 +98,10 @@ def main():
             scored,
             top_n=int(fast_cfg.get('top_n',5)),
             max_age_sessions=int(fast_cfg.get('max_age_sessions',1)),
+            buy_zone_stop_fraction=float(fast_cfg.get('buy_zone_stop_fraction',0.50)),
+            min_buy_zone_pct=float(fast_cfg.get('min_buy_zone_pct',0.015)),
+            max_buy_zone_pct=float(fast_cfg.get('max_buy_zone_pct',0.04)),
+            trade_now_setups=tuple(fast_cfg.get('trade_now_setups',['PULLBACK RECLAIM'])),
             min_leadership=float(fast_cfg.get('min_leadership',55)),
             min_short_momentum=float(fast_cfg.get('min_short_momentum',65)),
             min_flow=float(fast_cfg.get('min_flow',50)),
@@ -111,6 +115,36 @@ def main():
     ) if fast_history is not None and not fast_history.empty else pd.DataFrame()
     fast_summary.to_csv(out/'fast_trade_summary.csv', index=False)
     bt_payload['fast_trade_summary'] = fast_summary
+
+    # Persist event-level forward returns so threshold changes can be researched
+    # by setup, score, extension, flow and market context instead of optimizing
+    # only against an aggregate mean.
+    fast_event_returns = pd.DataFrame()
+    if fast_history is not None and not fast_history.empty:
+        fast_event_returns = fast_history.copy()
+        fast_event_returns['date'] = pd.to_datetime(
+            fast_event_returns['entry_date']
+        ).dt.normalize()
+        forward_cols = []
+        for h in (3,5,10):
+            forward_cols.extend([
+                f'fwd_{h}', f'alpha_market_{h}', f'alpha_sector_{h}'
+            ])
+        context_cols = [
+            c for c in ['regime','market_score','breadth_ma20','breadth_ma50']
+            if c in fast_prepared.columns
+        ]
+        prep_cols = ['date','ticker'] + [
+            c for c in forward_cols + context_cols if c in fast_prepared.columns
+        ]
+        prepared_events = fast_prepared[prep_cols].drop_duplicates(['date','ticker']).copy()
+        prepared_events = prepared_events.rename(columns={
+            c: f'signal_{c}' for c in context_cols
+        })
+        fast_event_returns = fast_event_returns.merge(
+            prepared_events, on=['date','ticker'], how='left'
+        )
+        fast_event_returns.to_csv(out/'fast_trade_event_returns.csv', index=False)
 
     render_dashboard(
         latest, reg_latest, ROOT/'outputs'/'dashboard.html',
