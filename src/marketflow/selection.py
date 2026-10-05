@@ -837,6 +837,10 @@ def build_fast_trade_candidates(
     min_buy_zone_pct: float = 0.015,
     max_buy_zone_pct: float = 0.04,
     trade_now_setups: tuple[str, ...] = ('PULLBACK RECLAIM',),
+    quality_min_fast_score: float = 75.0,
+    quality_min_leadership: float = 80.0,
+    quality_min_flow: float = 70.0,
+    quality_min_sector: float = 60.0,
     **kwargs,
 ) -> pd.DataFrame:
     """Return current short-horizon setups; less restrictive than V4 swing entries."""
@@ -910,10 +914,33 @@ def build_fast_trade_candidates(
     breakout_setup=setup.eq('FAST BREAKOUT')
     ignition_setup=setup.eq('MOMENTUM IGNITION')
     inside_buy_zone=current_px.le(out['fast_buy_max']).fillna(False)
+
+    # Backtest-calibrated production quality tiers:
+    # Pullback Reclaim alone had no positive expectancy. The edge improved when
+    # short-horizon timing was combined with strong leadership, flow and sector.
+    leadership_now=pd.to_numeric(
+        out.get('leadership_score_current',out.get('leadership_score')), errors='coerce'
+    )
+    flow_now=pd.to_numeric(
+        out.get('flow_score_current',out.get('flow_score')), errors='coerce'
+    )
+    sector_now=pd.to_numeric(
+        out.get('sector_score_current',out.get('sector_score')), errors='coerce'
+    )
+    fast_score_now=pd.to_numeric(out.get('fast_score'), errors='coerce')
+    quality_gate=(
+        leadership_now.ge(float(quality_min_leadership))
+        & flow_now.ge(float(quality_min_flow))
+        & sector_now.ge(float(quality_min_sector))
+    )
+    high_conviction=quality_gate & fast_score_now.ge(float(quality_min_fast_score))
+
     out['status']=np.select(
         [
             broken,
-            tradeable_setup & inside_buy_zone,
+            tradeable_setup & inside_buy_zone & high_conviction,
+            tradeable_setup & inside_buy_zone & quality_gate,
+            tradeable_setup & inside_buy_zone & ~quality_gate,
             tradeable_setup & ~inside_buy_zone,
             breakout_setup & inside_buy_zone,
             breakout_setup & ~inside_buy_zone,
@@ -922,7 +949,9 @@ def build_fast_trade_candidates(
         ],
         [
             'BROKEN',
+            'HIGH CONVICTION',
             'TRADE NOW',
+            'WAIT QUALITY',
             'WAIT PULLBACK',
             'RETEST READY',
             'WAIT RETEST',
@@ -935,13 +964,15 @@ def build_fast_trade_candidates(
     # Non-pullback setups stay non-buy signals, but now carry a concrete next
     # action instead of the unhelpful generic WATCH ONLY label.
     status_priority=out['status'].map({
-        'TRADE NOW':0,
-        'RETEST READY':1,
-        'CONFIRM MOMENTUM':2,
-        'WAIT PULLBACK':3,
-        'WAIT RETEST':4,
-        'WAIT COOL-OFF':5,
-        'WATCH ONLY':6,
+        'HIGH CONVICTION':0,
+        'TRADE NOW':1,
+        'RETEST READY':2,
+        'CONFIRM MOMENTUM':3,
+        'WAIT QUALITY':4,
+        'WAIT PULLBACK':5,
+        'WAIT RETEST':6,
+        'WAIT COOL-OFF':7,
+        'WATCH ONLY':8,
     }).fillna(7)
     out=(
         out.assign(_status_priority=status_priority)
