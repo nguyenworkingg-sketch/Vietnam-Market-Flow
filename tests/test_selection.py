@@ -263,6 +263,35 @@ def test_fast_trade_pullback_reclaim_can_be_trade_now_inside_atr_buy_zone():
     cands=build_fast_trade_candidates(hist,top_n=3,max_age_sessions=1)
     assert not cands.empty
     row=cands.iloc[0]
-    assert row['status']=='TRADE NOW'
+    # Pullback alone is no longer an immediate buy after backtest review.
+    assert row['status']=='WAIT QUALITY'
     assert row['current_price'] <= row['fast_buy_max']
     assert row['fast_stop_level'] < row['entry_price']
+
+
+def test_fast_trade_quality_tiers_promote_only_strong_pullbacks():
+    dates = pd.bdate_range('2026-10-01', periods=6)
+    rows=[]
+    specs=[
+        ('HIGH',85,82,82,78),
+        ('TRADE',83,75,65,72),
+    ]
+    closes=[19.80,19.90,19.95,20.00,20.00,20.15]
+    macd=[-.02,-.01,.00,.01,.02,.08]
+    for ticker,lead,flow,sector,short in specs:
+        for i,d in enumerate(dates):
+            ma20=19.90 + i*.025
+            rows.append({
+                'date':d,'ticker':ticker,'sector':'Hóa chất','close':closes[i],
+                'ma20':ma20,'ma20_distance':closes[i]/ma20-1,
+                'ma20_slope_5':.01,'ret_5':.025,'short_momentum_score':short,
+                'leadership_score':lead,'flow_score':flow,'trend_score':78,'sector_score':sector,
+                'acceleration':12 if ticker=='HIGH' else 4,'volume_ratio_20':1.4,
+                'macd_hist':macd[i],'prior_high_10':99,'atr_pct_20':.025,
+                'prior_low_10':19.20,'stage':'EMERGING',
+            })
+    hist=pd.DataFrame(rows)
+    cands=build_fast_trade_candidates(hist,top_n=5,max_age_sessions=1)
+    statuses=dict(zip(cands['ticker'],cands['status']))
+    assert statuses['HIGH']=='HIGH CONVICTION'
+    assert statuses['TRADE']=='TRADE NOW'
