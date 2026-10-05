@@ -110,9 +110,15 @@ fast_trade:
   # Parallel 3-10 session engine. It is intentionally faster than the V4 swing
   # model and does not require RS60/120, weekly trend or long-momentum persistence.
   enabled: true
-  model_version: fast-v1-2026-10-05
+  model_version: fast-v1.1-execution-2026-10-05
   top_n: 5
   max_age_sessions: 1
+  # Execution policy is intentionally stricter than signal discovery.
+  trade_now_setups:
+    - PULLBACK RECLAIM
+  buy_zone_stop_fraction: 0.50
+  min_buy_zone_pct: 0.015
+  max_buy_zone_pct: 0.04
   min_leadership: 55
   min_short_momentum: 65
   min_flow: 50
