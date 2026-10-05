@@ -383,6 +383,7 @@ def build_entry_signal_history(
         'Pullback resume + HTF confirm',
     )
     e['entry_price'] = pd.to_numeric(e['close'], errors='coerce')
+    e['entry_reason'] = e['fast_setup']
     e['entry_pullback_band'] = e['_pullback_band']
     e['entry_local_ma20_cap'] = e['_local_ma20_cap']
     e['entry_local_ret5_cap'] = e['_local_ret5_cap']
@@ -816,7 +817,7 @@ def build_fast_trade_signal_history(
     e = e.rename(columns={'date':'entry_date'})
 
     cols = [
-        'entry_date','ticker','sector','fast_setup','fast_score','entry_price','fast_stop_pct',
+        'entry_date','ticker','sector','fast_setup','entry_reason','fast_score','entry_price','fast_stop_pct',
         'fast_target_1r','fast_target_2r','leadership_score','short_momentum_score',
         'flow_score','trend_score','sector_score','acceleration','ma20_distance','ret_5',
         'volume_ratio_20','macd_hist','atr_pct_20','stage',
