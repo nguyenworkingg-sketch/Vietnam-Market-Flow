@@ -88,8 +88,12 @@ DISPLAY = {
     'fast_setup': 'Setup',
     'fast_rank_score': 'Fast score',
     'fast_stop_pct': 'Stop %',
+    'fast_stop_level': 'Stop giá',
+    'fast_buy_zone_pct': 'Biên mua',
+    'fast_buy_max': 'Mua tối đa',
     'fast_target_1r': 'Target 1R',
     'fast_target_2r': 'Target 2R',
+    'entry_age_sessions': 'Tuổi tín hiệu',
     'volume_ratio_20': 'Vol/20P',
     'risk_mode': 'Risk mode',
     'atr_stop_pct': 'ATR stop %',
@@ -125,7 +129,7 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
     if d.empty:
         return "<div class='empty'>Chưa có dữ liệu phù hợp.</div>"
     for c in d.select_dtypes(include='number').columns:
-        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak','atr_pct_at_entry','adaptive_stop_pct','atr_stop_pct','structural_stop_pct','raw_required_stop_pct','profit_arm_pct_used','profit_floor_pct_used','trail_pct_current','atr_pct_20','entry_pullback_band','entry_local_ma20_cap','entry_local_ret5_cap','position_size_factor_vs_5pct','fast_stop_pct'}:
+        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak','atr_pct_at_entry','adaptive_stop_pct','atr_stop_pct','structural_stop_pct','raw_required_stop_pct','profit_arm_pct_used','profit_floor_pct_used','trail_pct_current','atr_pct_20','entry_pullback_band','entry_local_ma20_cap','entry_local_ret5_cap','position_size_factor_vs_5pct','fast_stop_pct','fast_buy_zone_pct'}:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{100*v:+.1f}%')
         else:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
@@ -321,7 +325,9 @@ def _candidate_charts(
             setup=html.escape(str(row.get('fast_setup',row.get('entry_reason',row.get('technical_setup','')))))
             score=_num(row.get('fast_rank_score',row.get('entry_score_current',row.get('entry_score'))),1)
             if 'fast_setup' in row.index:
-                meta=f"FAST {score} · {setup} · Stop {_num(100*row.get('fast_stop_pct',np.nan),1,'%')} · 2R {_num(row.get('fast_target_2r'),2)}"
+                action=html.escape(str(row.get('status','WATCH ONLY')))
+                buy_max=_num(row.get('fast_buy_max'),2)
+                meta=f"{action} · FAST {score} · {setup} · Mua ≤ {buy_max} · Stop {_num(100*row.get('fast_stop_pct',np.nan),1,'%')} · 2R {_num(row.get('fast_target_2r'),2)}"
             else:
                 meta=f"Điểm mở vị thế {score} · {setup}"
         cards.append(
@@ -1267,17 +1273,21 @@ def render_dashboard(
     # Primary actionable panel: fast 3-10 session setups. The strict V4 swing
     # engine remains available below for slower, higher-conviction entries.
     if fast_trade_candidates is not None and not fast_trade_candidates.empty:
+        trade_now_count = int(fast_trade_candidates['status'].eq('TRADE NOW').sum()) if 'status' in fast_trade_candidates.columns else 0
+        wait_count = int(fast_trade_candidates['status'].eq('WAIT PULLBACK').sum()) if 'status' in fast_trade_candidates.columns else 0
+        watch_count = int(fast_trade_candidates['status'].eq('WATCH ONLY').sum()) if 'status' in fast_trade_candidates.columns else 0
+        status_class = 'entry-live' if trade_now_count else 'entry-zero'
         fast_status_html = (
-            f"<div class='entry-live'><b>{len(fast_trade_candidates)} FAST TRADE SETUP"
-            f"{'S' if len(fast_trade_candidates) != 1 else ''}</b> — phiên {html.escape(dt)}.</div>"
+            f"<div class='{status_class}'><b>{trade_now_count} TRADE NOW</b> — phiên {html.escape(dt)}"
+            f" · {wait_count} chờ pullback · {watch_count} watch-only.</div>"
         )
         fast_table_html = _table(
             fast_trade_candidates,
-            ['fast_rank','ticker','sector','fast_setup','fast_rank_score','entry_date',
-             'entry_price','current_price','since_entry_pct','fast_stop_pct',
-             'fast_target_1r','fast_target_2r','short_momentum_score','leadership_score',
-             'acceleration','flow_score','trend_score','sector_score','ma20_distance',
-             'ret_5','volume_ratio_20','atr_pct_20','stage'],
+            ['fast_rank','ticker','sector','status','fast_setup','fast_rank_score','entry_date','entry_age_sessions',
+             'entry_price','current_price','since_entry_pct','fast_buy_max','fast_buy_zone_pct',
+             'fast_stop_level','fast_stop_pct','fast_target_1r','fast_target_2r',
+             'short_momentum_score','leadership_score','acceleration','flow_score','trend_score',
+             'sector_score','ma20_distance','ret_5','volume_ratio_20','atr_pct_20','stage'],
             5,
         )
         fast_chart_html = _candidate_charts(
@@ -1453,7 +1463,7 @@ def render_dashboard(
     <div class='panel entry-panel' id='entry-top3'>
       <div class='section-head'><div><div class='section-kicker'>Short-term execution</div><h2>Top cơ hội giao dịch ngắn hạn — 3–10 phiên</h2></div><span class='tag'>Fast engine</span></div>
       <div class='entry-rule'><span class='rule-pill'>Short momentum</span><span class='rule-pill'>Flow</span><span class='rule-pill'>MA20 rising</span><span class='rule-pill'>Breakout / Pullback reclaim / Ignition</span><span class='rule-pill'>ATR anti-chase</span></div>
-      <div class='note' style='margin-bottom:10px'>Fast engine là lớp riêng cho trading ngắn hạn: <b>không bắt buộc RS60/120, weekly trend hay long-momentum persistence</b>. Nó ưu tiên sức mạnh 5–20 phiên, dòng tiền, tăng tốc và trigger cục bộ; stop/target được scale theo ATR. V4 strict swing vẫn giữ bên dưới để không trộn hai horizon.</div>
+      <div class='note' style='margin-bottom:10px'>Fast engine là lớp riêng cho trading ngắn hạn: <b>không bắt buộc RS60/120, weekly trend hay long-momentum persistence</b>. Tầng signal tìm sức mạnh 5–20 phiên, dòng tiền, tăng tốc và trigger cục bộ; tầng execution sau đó mới quyết định hành động. Theo diagnostics hiện tại, chỉ <b>Pullback Reclaim</b> đủ điều kiện lên <b>TRADE NOW</b> nếu giá còn trong buy-zone theo ATR; Breakout / Momentum Ignition tạm giữ <b>WATCH ONLY</b> cho tới khi backtest chứng minh tốt hơn. V4 strict swing vẫn giữ bên dưới để không trộn hai horizon.</div>
       {entry_status_html}
       <div class='table-wrap'>{entry_table_html}</div>
       <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>Fast technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>{entry_chart_label}</span></div>
