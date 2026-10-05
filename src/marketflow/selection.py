@@ -804,6 +804,7 @@ def build_fast_trade_signal_history(
         ['FAST BREAKOUT','PULLBACK RECLAIM','MOMENTUM IGNITION'],
         default='FAST SETUP',
     )
+    e['entry_reason'] = e['fast_setup']
     e['entry_price'] = pd.to_numeric(e['close'], errors='coerce')
     # Suggest a local risk band for the fast engine. Final execution still uses
     # the structure-aware risk module; this is for daily triage / sizing.
