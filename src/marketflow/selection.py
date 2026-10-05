@@ -383,7 +383,6 @@ def build_entry_signal_history(
         'Pullback resume + HTF confirm',
     )
     e['entry_price'] = pd.to_numeric(e['close'], errors='coerce')
-    e['entry_reason'] = e['fast_setup']
     e['entry_pullback_band'] = e['_pullback_band']
     e['entry_local_ma20_cap'] = e['_local_ma20_cap']
     e['entry_local_ret5_cap'] = e['_local_ret5_cap']
