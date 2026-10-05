@@ -9,7 +9,11 @@ from .scoring import build_scores, add_stage
 from .regime import market_regime
 from .storage import DuckStore
 from .dashboard import render_dashboard
-from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
+from .selection import (
+    detect_opportunity_entries, build_model_portfolio, build_entry_candidates,
+    build_entry_signal_history, build_entry_watchlist,
+    build_fast_trade_signal_history, build_fast_trade_candidates,
+)
 from .supabase_store import SupabaseRESTStore
 from .risk import simulate_position_lifecycle, stop_sensitivity_study, risk_policy_comparison
 
@@ -276,6 +280,32 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             min_local_ma20_cap=float(opp_cfg.get('entry_min_local_ma20_cap', 0.03)),
             min_local_ret5_cap=float(opp_cfg.get('entry_min_local_ret5_cap', 0.05)),
         )
+        fast_cfg = cfg.get('fast_trade', {})
+        fast_trade_history = build_fast_trade_signal_history(
+            scored,
+            min_leadership=float(fast_cfg.get('min_leadership', 55)),
+            min_short_momentum=float(fast_cfg.get('min_short_momentum', 65)),
+            min_flow=float(fast_cfg.get('min_flow', 50)),
+            min_sector=float(fast_cfg.get('min_sector', 45)),
+            max_ma20_distance=float(fast_cfg.get('max_ma20_distance', 0.12)),
+            max_ret5=float(fast_cfg.get('max_ret5', 0.18)),
+        ) if bool(fast_cfg.get('enabled', True)) else pd.DataFrame()
+        if not fast_trade_history.empty:
+            fast_trade_history['model_version'] = str(
+                fast_cfg.get('model_version', 'fast-v1')
+            )
+        fast_trade_candidates = build_fast_trade_candidates(
+            scored,
+            top_n=int(fast_cfg.get('top_n', 5)),
+            max_age_sessions=int(fast_cfg.get('max_age_sessions', 1)),
+            min_leadership=float(fast_cfg.get('min_leadership', 55)),
+            min_short_momentum=float(fast_cfg.get('min_short_momentum', 65)),
+            min_flow=float(fast_cfg.get('min_flow', 50)),
+            min_sector=float(fast_cfg.get('min_sector', 45)),
+            max_ma20_distance=float(fast_cfg.get('max_ma20_distance', 0.12)),
+            max_ret5=float(fast_cfg.get('max_ret5', 0.18)),
+        ) if bool(fast_cfg.get('enabled', True)) else pd.DataFrame()
+
         risk_cfg = cfg.get('risk_management', {})
         position_monitor = simulate_position_lifecycle(
             feat, scored, entry_signal_history, risk_cfg
@@ -291,6 +321,8 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
         portfolio.to_csv(out / 'model_portfolio_10.csv', index=False)
         entry_candidates.to_csv(out / 'top3_entry_candidates.csv', index=False)
         entry_watchlist.to_csv(out / 'top3_entry_watchlist.csv', index=False)
+        fast_trade_candidates.to_csv(out / 'fast_trade_candidates.csv', index=False)
+        fast_trade_history.to_csv(out / 'fast_trade_history.csv', index=False)
         entry_signal_history.to_csv(out / 'entry_signal_history.csv', index=False)
 
         # Explorer audit trail: keep historical signals from prior model
@@ -338,6 +370,9 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             regime_history=regime,
             sector_history=sector_daily,
             opportunity_cfg=opp_cfg,
+            fast_trade_cfg=fast_cfg,
+            fast_trade_candidates=fast_trade_candidates,
+            fast_trade_history=fast_trade_history,
             risk_cfg=risk_cfg,
             price_history=feat,
             historical_entry_events=entry_signal_audit,
@@ -352,6 +387,9 @@ def run(provider, cfg: dict, root: str | Path, history_start: str | None = None,
             regime_history=regime,
             sector_history=sector_daily,
             opportunity_cfg=opp_cfg,
+            fast_trade_cfg=fast_cfg,
+            fast_trade_candidates=fast_trade_candidates,
+            fast_trade_history=fast_trade_history,
             risk_cfg=risk_cfg,
             price_history=feat,
             historical_entry_events=entry_signal_audit,

@@ -106,6 +106,20 @@ opportunities:
   entry_squeeze_bonus: 5
   entry_pullback_bonus: 3
 
+fast_trade:
+  # Parallel 3-10 session engine. It is intentionally faster than the V4 swing
+  # model and does not require RS60/120, weekly trend or long-momentum persistence.
+  enabled: true
+  model_version: fast-v1-2026-10-05
+  top_n: 5
+  max_age_sessions: 1
+  min_leadership: 55
+  min_short_momentum: 65
+  min_flow: 50
+  min_sector: 45
+  max_ma20_distance: 0.12
+  max_ret5: 0.18
+
 risk_management:
   # Volatility-adaptive risk. ATR is measured on the signal date so all levels
   # are known before the T+1 fill. Floors/caps prevent absurdly tight/wide risk.

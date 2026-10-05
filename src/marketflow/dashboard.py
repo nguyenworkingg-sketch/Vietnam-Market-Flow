@@ -7,7 +7,11 @@ import math
 import numpy as np
 import pandas as pd
 
-from .selection import detect_opportunity_entries, build_model_portfolio, build_entry_candidates, build_entry_signal_history, build_entry_watchlist
+from .selection import (
+    detect_opportunity_entries, build_model_portfolio, build_entry_candidates,
+    build_entry_signal_history, build_entry_watchlist,
+    build_fast_trade_signal_history, build_fast_trade_candidates,
+)
 from .risk import simulate_position_lifecycle, stop_sensitivity_study
 
 
@@ -80,6 +84,13 @@ DISPLAY = {
     'entry_pullback_band': 'Pullback band %',
     'entry_local_ma20_cap': 'MA20 cap %',
     'entry_local_ret5_cap': '5D cap %',
+    'fast_rank': 'Hạng',
+    'fast_setup': 'Setup',
+    'fast_rank_score': 'Fast score',
+    'fast_stop_pct': 'Stop %',
+    'fast_target_1r': 'Target 1R',
+    'fast_target_2r': 'Target 2R',
+    'volume_ratio_20': 'Vol/20P',
     'risk_mode': 'Risk mode',
     'atr_stop_pct': 'ATR stop %',
     'structural_stop_pct': 'Structure stop %',
@@ -114,7 +125,7 @@ def _table(df: pd.DataFrame, columns: list[str], n=20) -> str:
     if d.empty:
         return "<div class='empty'>Chưa có dữ liệu phù hợp.</div>"
     for c in d.select_dtypes(include='number').columns:
-        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak','atr_pct_at_entry','adaptive_stop_pct','atr_stop_pct','structural_stop_pct','raw_required_stop_pct','profit_arm_pct_used','profit_floor_pct_used','trail_pct_current','atr_pct_20','entry_pullback_band','entry_local_ma20_cap','entry_local_ret5_cap','position_size_factor_vs_5pct'}:
+        if c in {'since_entry_pct','lifecycle_return','no_stop_return','peak_return','drawdown_from_peak','atr_pct_at_entry','adaptive_stop_pct','atr_stop_pct','structural_stop_pct','raw_required_stop_pct','profit_arm_pct_used','profit_floor_pct_used','trail_pct_current','atr_pct_20','entry_pullback_band','entry_local_ma20_cap','entry_local_ret5_cap','position_size_factor_vs_5pct','fast_stop_pct'}:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{100*v:+.1f}%')
         else:
             d[c] = d[c].map(lambda v: '' if pd.isna(v) else f'{v:,.1f}')
@@ -307,9 +318,12 @@ def _candidate_charts(
             if failed:
                 meta += f" · Còn thiếu: {failed}"
         else:
-            setup=html.escape(str(row.get('entry_reason',row.get('technical_setup',''))))
-            score=_num(row.get('entry_score_current',row.get('entry_score')),1)
-            meta=f"Điểm mở vị thế {score} · {setup}"
+            setup=html.escape(str(row.get('fast_setup',row.get('entry_reason',row.get('technical_setup','')))))
+            score=_num(row.get('fast_rank_score',row.get('entry_score_current',row.get('entry_score'))),1)
+            if 'fast_setup' in row.index:
+                meta=f"FAST {score} · {setup} · Stop {_num(100*row.get('fast_stop_pct',np.nan),1,'%')} · 2R {_num(row.get('fast_target_2r'),2)}"
+            else:
+                meta=f"Điểm mở vị thế {score} · {setup}"
         cards.append(
             f"<details class='price-chart-detail'{open_attr}>"
             f"<summary><span>#{i+1} <b>{html.escape(ticker)}</b></span><span class='chart-meta'>{meta}</span></summary>"
@@ -1122,6 +1136,9 @@ def render_dashboard(
     sector_history: pd.DataFrame | None = None,
     backtest: dict[str, pd.DataFrame] | None = None,
     opportunity_cfg: dict | None = None,
+    fast_trade_cfg: dict | None = None,
+    fast_trade_candidates: pd.DataFrame | None = None,
+    fast_trade_history: pd.DataFrame | None = None,
     risk_cfg: dict | None = None,
     price_history: pd.DataFrame | None = None,
     historical_entry_events: pd.DataFrame | None = None,
@@ -1154,6 +1171,7 @@ def render_dashboard(
     top_sectors=sectors.head(5)['sector'].astype(str).tolist()
     bt=backtest or {}
     opp_cfg=opportunity_cfg or {}
+    fast_cfg=fast_trade_cfg or {}
     short_threshold=float(opp_cfg.get('short_threshold',80))
     long_threshold=float(opp_cfg.get('long_threshold',80))
     min_sector_score=float(opp_cfg.get('min_sector_score',50))
@@ -1171,6 +1189,28 @@ def render_dashboard(
         sector_cap=portfolio_sector_cap,
     )
     score_history = scored_history if scored_history is not None else pd.DataFrame()
+    if fast_trade_history is None:
+        fast_trade_history = build_fast_trade_signal_history(
+            score_history,
+            min_leadership=float(fast_cfg.get('min_leadership',55)),
+            min_short_momentum=float(fast_cfg.get('min_short_momentum',65)),
+            min_flow=float(fast_cfg.get('min_flow',50)),
+            min_sector=float(fast_cfg.get('min_sector',45)),
+            max_ma20_distance=float(fast_cfg.get('max_ma20_distance',.12)),
+            max_ret5=float(fast_cfg.get('max_ret5',.18)),
+        ) if bool(fast_cfg.get('enabled',True)) else pd.DataFrame()
+    if fast_trade_candidates is None:
+        fast_trade_candidates = build_fast_trade_candidates(
+            score_history,
+            top_n=int(fast_cfg.get('top_n',5)),
+            max_age_sessions=int(fast_cfg.get('max_age_sessions',1)),
+            min_leadership=float(fast_cfg.get('min_leadership',55)),
+            min_short_momentum=float(fast_cfg.get('min_short_momentum',65)),
+            min_flow=float(fast_cfg.get('min_flow',50)),
+            min_sector=float(fast_cfg.get('min_sector',45)),
+            max_ma20_distance=float(fast_cfg.get('max_ma20_distance',.12)),
+            max_ret5=float(fast_cfg.get('max_ret5',.18)),
+        ) if bool(fast_cfg.get('enabled',True)) else pd.DataFrame()
     entry_kwargs = dict(
         min_sector_score=float(opp_cfg.get('entry_min_sector_score',55)),
         min_leadership_score=float(opp_cfg.get('entry_min_leadership_score',70)),
@@ -1224,32 +1264,53 @@ def render_dashboard(
         min_local_ma20_cap=entry_kwargs['min_local_ma20_cap'],
         min_local_ret5_cap=entry_kwargs['min_local_ret5_cap'],
     )
-    if entry_candidates.empty:
-        entry_status_html = (
-            f"<div class='entry-zero'><b>0 FRESH ENTRY</b> — phiên {html.escape(dt)}. "
-            "Không có cổ phiếu nào vượt toàn bộ V4 gate; model không ép đủ Top 3.</div>"
+    # Primary actionable panel: fast 3-10 session setups. The strict V4 swing
+    # engine remains available below for slower, higher-conviction entries.
+    if fast_trade_candidates is not None and not fast_trade_candidates.empty:
+        fast_status_html = (
+            f"<div class='entry-live'><b>{len(fast_trade_candidates)} FAST TRADE SETUP"
+            f"{'S' if len(fast_trade_candidates) != 1 else ''}</b> — phiên {html.escape(dt)}.</div>"
         )
-        entry_table_html = (
-            "<div class='watch-head'><b>Top 3 Near Entry / Watchlist</b>"
-            "<span>Chỉ để theo dõi — không phải entry signal</span></div>"
-            + _table(
-                entry_watchlist,
-                ['watch_rank','ticker','sector','status','watch_score','gate_fail_count',
-                 'gate_failures','close','real_strength_med10','residual_mom_60',
-                 'residual_mom_120','rs_persistence_count','atr_pct_20','atr_regime_ratio','stage'],
-                3,
-            )
+        fast_table_html = _table(
+            fast_trade_candidates,
+            ['fast_rank','ticker','sector','fast_setup','fast_rank_score','entry_date',
+             'entry_price','current_price','since_entry_pct','fast_stop_pct',
+             'fast_target_1r','fast_target_2r','short_momentum_score','leadership_score',
+             'acceleration','flow_score','trend_score','sector_score','ma20_distance',
+             'ret_5','volume_ratio_20','atr_pct_20','stage'],
+            5,
         )
-        entry_chart_html = _candidate_charts(
-            price_history, entry_watchlist, pd.DataFrame(), days=126, watchlist_mode=True
+        fast_chart_html = _candidate_charts(
+            price_history, fast_trade_candidates, fast_trade_history, days=90
         )
-        entry_chart_label = "Watchlist chart — NOT ENTRY"
+        primary_chart_label = "Fast trade · 3–10 phiên"
     else:
-        entry_status_html = (
-            f"<div class='entry-live'><b>{len(entry_candidates)} FRESH ENTRY"
+        fast_status_html = (
+            f"<div class='entry-zero'><b>0 FAST TRADE</b> — phiên {html.escape(dt)}. "
+            "Không ép lệnh nếu chưa có breakout / pullback reclaim / momentum ignition đủ sạch.</div>"
+        )
+        fast_table_html = "<div class='empty'>Chưa có setup ngắn hạn đạt Fast gate.</div>"
+        fast_chart_html = ""
+        primary_chart_label = "Fast trade"
+
+    if entry_candidates.empty:
+        swing_status_html = (
+            f"<div class='entry-zero'><b>0 V4 SWING ENTRY</b> — phiên {html.escape(dt)}. "
+            "Strict swing gate vẫn giữ nguyên, không hạ chuẩn để ép tín hiệu.</div>"
+        )
+        swing_table_html = _table(
+            entry_watchlist,
+            ['watch_rank','ticker','sector','status','watch_score','gate_fail_count',
+             'gate_failures','close','real_strength_med10','residual_mom_60',
+             'residual_mom_120','rs_persistence_count','atr_pct_20','atr_regime_ratio','stage'],
+            3,
+        )
+    else:
+        swing_status_html = (
+            f"<div class='entry-live'><b>{len(entry_candidates)} V4 SWING ENTRY"
             f"{'S' if len(entry_candidates) != 1 else ''}</b> — phiên {html.escape(dt)}.</div>"
         )
-        entry_table_html = _table(
+        swing_table_html = _table(
             entry_candidates,
             ['entry_rank','ticker','sector','entry_date','entry_price','current_price',
              'since_entry_pct','entry_age_sessions','entry_reason','entry_score_current',
@@ -1258,10 +1319,11 @@ def render_dashboard(
              'entry_local_ma20_cap','entry_local_ret5_cap','stage'],
             3,
         )
-        entry_chart_html = _candidate_charts(
-            price_history, entry_candidates, entry_signal_history, days=126
-        )
-        entry_chart_label = "Fresh-entry chart"
+
+    entry_status_html = fast_status_html
+    entry_table_html = fast_table_html
+    entry_chart_html = fast_chart_html
+    entry_chart_label = primary_chart_label
     risk_cfg = risk_cfg or {}
     position_monitor = simulate_position_lifecycle(
         price_history if price_history is not None else pd.DataFrame(),
@@ -1314,9 +1376,11 @@ def render_dashboard(
         risk_sensitivity_html = rs.to_html(index=False,border=0,classes='data',escape=True,float_format=lambda v:f"{v:.1f}")
 
     default_chart_ticker = (
-        str(entry_candidates.iloc[0]['ticker']) if not entry_candidates.empty
-        else (str(entry_watchlist.iloc[0]['ticker']) if not entry_watchlist.empty
-              else (str(leaders.iloc[0]['ticker']) if not leaders.empty else None))
+        str(fast_trade_candidates.iloc[0]['ticker'])
+        if fast_trade_candidates is not None and not fast_trade_candidates.empty
+        else (str(entry_candidates.iloc[0]['ticker']) if not entry_candidates.empty
+              else (str(entry_watchlist.iloc[0]['ticker']) if not entry_watchlist.empty
+                    else (str(leaders.iloc[0]['ticker']) if not leaders.empty else None)))
     )
     explorer_events = (
         historical_entry_events
@@ -1387,13 +1451,18 @@ def render_dashboard(
     <div class='topline'><div><div class='eyebrow'>Finsuccess · Market Intelligence</div><h1>Vietnam Market Flow</h1><div class='muted'>Theo dõi trạng thái thị trường, luân chuyển ngành và độ rộng của nhóm cổ phiếu dẫn dắt.</div></div><div class='tag'>Dữ liệu đến {html.escape(dt)}</div></div>
 
     <div class='panel entry-panel' id='entry-top3'>
-      <div class='section-head'><div><div class='section-kicker'>Priority setup</div><h2>Top 3 ứng viên mở vị thế — Model</h2></div><span class='tag'>Strict technical gate</span></div>
-      <div class='entry-rule'><span class='rule-pill'>Residual momentum 60/120 &gt; 0</span><span class='rule-pill'>RS vs sector &gt; 0</span><span class='rule-pill'>Sector vs market &gt; 0</span><span class='rule-pill'>≥ 2 RS horizons dương</span><span class='rule-pill'>Daily + Weekly confirm</span><span class='rule-pill'>Entry gần MA20</span><span class='rule-pill'>Anti-chase</span></div>
-      <div class='note' style='margin-bottom:10px'>V4 tách <b>strength</b> khỏi <b>timing</b>: sau khi strength được xác nhận, vùng entry được co/giãn theo <b>ATR riêng của từng cổ phiếu</b>. Mã biến động thấp phải vào sát MA20 hơn; mã biến động cao được cho biên pullback/anti-chase rộng hơn nhưng vẫn chịu trần để tránh mua đuổi.</div>
+      <div class='section-head'><div><div class='section-kicker'>Short-term execution</div><h2>Top cơ hội giao dịch ngắn hạn — 3–10 phiên</h2></div><span class='tag'>Fast engine</span></div>
+      <div class='entry-rule'><span class='rule-pill'>Short momentum</span><span class='rule-pill'>Flow</span><span class='rule-pill'>MA20 rising</span><span class='rule-pill'>Breakout / Pullback reclaim / Ignition</span><span class='rule-pill'>ATR anti-chase</span></div>
+      <div class='note' style='margin-bottom:10px'>Fast engine là lớp riêng cho trading ngắn hạn: <b>không bắt buộc RS60/120, weekly trend hay long-momentum persistence</b>. Nó ưu tiên sức mạnh 5–20 phiên, dòng tiền, tăng tốc và trigger cục bộ; stop/target được scale theo ATR. V4 strict swing vẫn giữ bên dưới để không trộn hai horizon.</div>
       {entry_status_html}
       <div class='table-wrap'>{entry_table_html}</div>
-      <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>6-month technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>{entry_chart_label} · ~126 phiên</span></div>
+      <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>Fast technical chart</div><h2>Nến · Volume · MACD</h2></div><span class='tag'>{entry_chart_label}</span></div>
       {entry_chart_html}
+      <details class='swing-details' style='margin-top:14px'>
+        <summary>V4 Swing / Strict gate — xem setup trung hạn</summary>
+        <div style='margin-top:10px'>{swing_status_html}</div>
+        <div class='table-wrap'>{swing_table_html}</div>
+      </details>
     </div>
 
     <div class='panel section' id='position-risk'>
@@ -1410,7 +1479,7 @@ def render_dashboard(
       {stock_explorer_html}
     </div>
 
-    <div class='nav'><a href='#entry-top3'>Fresh entry</a><a href='#position-risk'>Risk / Exit</a><a href='#chart-explorer'>Chart cổ phiếu</a><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
+    <div class='nav'><a href='#entry-top3'>Fast Trade</a><a href='#position-risk'>Risk / Exit</a><a href='#chart-explorer'>Chart cổ phiếu</a><a href='#market'>Thị trường</a><a href='#opportunities'>Cơ hội mới</a><a href='#portfolio'>Model Port 10</a><a href='#sectors'>Ngành</a><a href='#stocks'>Cổ phiếu</a><a href='#validation'>Kiểm định</a><a href='#method'>Phương pháp</a></div>
 
     <div class='kpis' id='market'>
       <div class='card'><div class='card-label'>Trạng thái</div><div class='big'>{html.escape(regime_text)}</div><div class='sub'>Regime tổng hợp</div></div>
