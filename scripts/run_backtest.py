@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
 
 from marketflow.backtest import run_research_suite, entry_signal_study
+from marketflow.selection import build_fast_trade_signal_history, build_fast_trade_candidates
 from marketflow.dashboard import render_dashboard
 
 
@@ -74,7 +75,42 @@ def main():
     }
     cfg = yaml.safe_load((ROOT/'config'/'model.yaml').read_text(encoding='utf-8'))
     opp_cfg = cfg.get('opportunities', {})
+    fast_cfg = cfg.get('fast_trade', {})
     risk_cfg = cfg.get('risk_management', {})
+    fast_history_path = ROOT/'outputs'/'fast_trade_history.csv'
+    if fast_history_path.exists():
+        fast_history = pd.read_csv(fast_history_path, parse_dates=['entry_date'])
+    else:
+        fast_history = build_fast_trade_signal_history(
+            scored,
+            min_leadership=float(fast_cfg.get('min_leadership',55)),
+            min_short_momentum=float(fast_cfg.get('min_short_momentum',65)),
+            min_flow=float(fast_cfg.get('min_flow',50)),
+            min_sector=float(fast_cfg.get('min_sector',45)),
+            max_ma20_distance=float(fast_cfg.get('max_ma20_distance',.12)),
+            max_ret5=float(fast_cfg.get('max_ret5',.18)),
+        )
+    fast_candidates_path = ROOT/'outputs'/'fast_trade_candidates.csv'
+    if fast_candidates_path.exists():
+        fast_candidates = pd.read_csv(fast_candidates_path, parse_dates=['entry_date'])
+    else:
+        fast_candidates = build_fast_trade_candidates(
+            scored,
+            top_n=int(fast_cfg.get('top_n',5)),
+            max_age_sessions=int(fast_cfg.get('max_age_sessions',1)),
+            min_leadership=float(fast_cfg.get('min_leadership',55)),
+            min_short_momentum=float(fast_cfg.get('min_short_momentum',65)),
+            min_flow=float(fast_cfg.get('min_flow',50)),
+            min_sector=float(fast_cfg.get('min_sector',45)),
+            max_ma20_distance=float(fast_cfg.get('max_ma20_distance',.12)),
+            max_ret5=float(fast_cfg.get('max_ret5',.18)),
+        )
+    fast_summary = entry_signal_study(
+        suite['prepared'], fast_history, horizons=(3,5,10)
+    ) if fast_history is not None and not fast_history.empty else pd.DataFrame()
+    fast_summary.to_csv(out/'fast_trade_summary.csv', index=False)
+    bt_payload['fast_trade_summary'] = fast_summary
+
     render_dashboard(
         latest, reg_latest, ROOT/'outputs'/'dashboard.html',
         scored_history=scored,
@@ -82,6 +118,9 @@ def main():
         sector_history=sector_history,
         backtest=bt_payload,
         opportunity_cfg=opp_cfg,
+        fast_trade_cfg=fast_cfg,
+        fast_trade_candidates=fast_candidates,
+        fast_trade_history=fast_history,
         risk_cfg=risk_cfg,
         price_history=panel,
         historical_entry_events=entry_audit,
@@ -94,6 +133,9 @@ def main():
         sector_history=sector_history,
         backtest=bt_payload,
         opportunity_cfg=opp_cfg,
+        fast_trade_cfg=fast_cfg,
+        fast_trade_candidates=fast_candidates,
+        fast_trade_history=fast_history,
         risk_cfg=risk_cfg,
         price_history=panel,
         historical_entry_events=entry_audit,
