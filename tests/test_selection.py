@@ -233,9 +233,10 @@ def test_fast_trade_can_trigger_without_long_term_rs_confirmation():
     assert events.iloc[-1]['fast_setup'] in {'FAST BREAKOUT','MOMENTUM IGNITION'}
     cands=build_fast_trade_candidates(hist,top_n=3,max_age_sessions=1)
     assert not cands.empty
-    # Breakout / ignition remain visible but are not mislabeled as immediate buys
-    # until short-horizon diagnostics improve.
-    assert cands.iloc[0]['status']=='WATCH ONLY'
+    # Breakout / ignition remain visible but are not mislabeled as immediate buys.
+    # The execution layer should state the next action instead of generic WATCH ONLY.
+    assert cands.iloc[0]['status']=='RETEST READY'
+    assert cands.iloc[0]['status']!='TRADE NOW'
     assert cands.iloc[0]['fast_stop_pct'] > 0
 
 
