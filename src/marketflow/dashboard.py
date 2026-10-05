@@ -1279,11 +1279,14 @@ def render_dashboard(
     if fast_trade_candidates is not None and not fast_trade_candidates.empty:
         trade_now_count = int(fast_trade_candidates['status'].eq('TRADE NOW').sum()) if 'status' in fast_trade_candidates.columns else 0
         wait_count = int(fast_trade_candidates['status'].eq('WAIT PULLBACK').sum()) if 'status' in fast_trade_candidates.columns else 0
+        retest_count = int(fast_trade_candidates['status'].isin(['RETEST READY','WAIT RETEST']).sum()) if 'status' in fast_trade_candidates.columns else 0
+        momentum_count = int(fast_trade_candidates['status'].isin(['CONFIRM MOMENTUM','WAIT COOL-OFF']).sum()) if 'status' in fast_trade_candidates.columns else 0
         watch_count = int(fast_trade_candidates['status'].eq('WATCH ONLY').sum()) if 'status' in fast_trade_candidates.columns else 0
         status_class = 'entry-live' if trade_now_count else 'entry-zero'
         fast_status_html = (
             f"<div class='{status_class}'><b>{trade_now_count} TRADE NOW</b> — phiên {html.escape(dt)}"
-            f" · {wait_count} chờ pullback · {watch_count} watch-only.</div>"
+            f" · {wait_count} chờ pullback · {retest_count} breakout/retest"
+            f" · {momentum_count} momentum-confirm · {watch_count} watch-only.</div>"
         )
         fast_table_html = _table(
             fast_trade_candidates,
