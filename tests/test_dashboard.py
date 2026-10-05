@@ -240,9 +240,9 @@ def test_dashboard_falls_back_to_watchlist_when_no_fresh_entry(tmp_path):
     )
     text = out.read_text(encoding='utf-8')
     assert '0 FRESH ENTRY' in text
-    assert 'Top 3 Near Entry / Watchlist' in text
-    assert 'WATCHLIST — NOT ENTRY' in text
-    assert 'model không ép đủ Top 3' in text
+    assert 'Top cơ hội giao dịch ngắn hạn — 3–10 phiên' in text
+    assert 'Fast engine' in text
+    assert 'V4 Swing / Strict gate' in text
 
 
 
