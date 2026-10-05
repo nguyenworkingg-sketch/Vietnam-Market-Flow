@@ -694,3 +694,201 @@ def build_entry_watchlist(
           'short_momentum_score','residual_mom_60','residual_mom_120','rs_persistence_count',
           'ma20_distance','ret_5','atr_pct_20','atr_regime_ratio','stage']
     return out[[z for z in cols if z in out.columns]].reset_index(drop=True)
+
+
+
+def build_fast_trade_signal_history(
+    scored_history: pd.DataFrame,
+    min_leadership: float = 55.0,
+    min_short_momentum: float = 65.0,
+    min_flow: float = 50.0,
+    min_sector: float = 45.0,
+    max_ma20_distance: float = 0.12,
+    max_ret5: float = 0.18,
+    top_n_per_day: int = 8,
+) -> pd.DataFrame:
+    """Short-horizon trade engine (roughly 3-10 sessions).
+
+    This deliberately does NOT require RS60/120, weekly trend, or long-momentum
+    persistence. It looks for fresh local acceleration inside a still-healthy
+    short-term trend and uses ATR-scaled anti-chase bands.
+    """
+    if scored_history is None or scored_history.empty:
+        return pd.DataFrame()
+
+    x = scored_history.copy()
+    x['date'] = pd.to_datetime(x['date']).dt.normalize()
+    x = x.sort_values(['ticker','date']).reset_index(drop=True)
+
+    needed = [
+        'close','ma20','ma20_distance','ma20_slope_5','ret_5','short_momentum_score',
+        'leadership_score','flow_score','trend_score','sector_score','acceleration',
+        'volume_ratio_20','macd_hist','prior_high_10','atr_pct_20','prior_low_10',
+    ]
+    for col in needed:
+        if col not in x.columns:
+            x[col] = np.nan
+
+    g = x.groupby('ticker', group_keys=False)
+    x['prev_close'] = g['close'].shift(1)
+    x['prev_ma20'] = g['ma20'].shift(1)
+    x['prev_short'] = g['short_momentum_score'].shift(1)
+    x['prev_macd_hist'] = g['macd_hist'].shift(1)
+
+    atr = pd.to_numeric(x['atr_pct_20'], errors='coerce')
+    x['_fast_ma20_cap'] = atr.mul(2.0).clip(lower=.04, upper=float(max_ma20_distance)).fillna(.08)
+    x['_fast_ret5_cap'] = atr.mul(4.0).clip(lower=.08, upper=float(max_ret5)).fillna(.12)
+    x['_fast_pullback_band'] = atr.mul(1.0).clip(lower=.015, upper=.05).fillna(.025)
+
+    base = (
+        pd.to_numeric(x['leadership_score'], errors='coerce').ge(float(min_leadership))
+        & pd.to_numeric(x['short_momentum_score'], errors='coerce').ge(float(min_short_momentum))
+        & pd.to_numeric(x['flow_score'], errors='coerce').ge(float(min_flow))
+        & pd.to_numeric(x['sector_score'], errors='coerce').ge(float(min_sector))
+        & pd.to_numeric(x['close'], errors='coerce').gt(pd.to_numeric(x['ma20'], errors='coerce'))
+        & pd.to_numeric(x['ma20_slope_5'], errors='coerce').gt(0)
+        & pd.to_numeric(x['ma20_distance'], errors='coerce').le(x['_fast_ma20_cap'])
+        & pd.to_numeric(x['ret_5'], errors='coerce').le(x['_fast_ret5_cap'])
+    )
+
+    breakout = (
+        pd.to_numeric(x['close'], errors='coerce').ge(pd.to_numeric(x['prior_high_10'], errors='coerce'))
+        & pd.to_numeric(x['volume_ratio_20'], errors='coerce').ge(1.10)
+        & pd.to_numeric(x['macd_hist'], errors='coerce').gt(0)
+    )
+    pullback = (
+        pd.to_numeric(x['prev_close'], errors='coerce').le(
+            pd.to_numeric(x['prev_ma20'], errors='coerce') * (1.0 + x['_fast_pullback_band'])
+        )
+        & pd.to_numeric(x['close'], errors='coerce').gt(pd.to_numeric(x['ma20'], errors='coerce'))
+        & pd.to_numeric(x['macd_hist'], errors='coerce').gt(pd.to_numeric(x['prev_macd_hist'], errors='coerce'))
+        & pd.to_numeric(x['volume_ratio_20'], errors='coerce').ge(.80)
+    )
+    ignition = (
+        pd.to_numeric(x['short_momentum_score'], errors='coerce').ge(75)
+        & (
+            pd.to_numeric(x['prev_short'], errors='coerce').lt(70)
+            | pd.to_numeric(x['acceleration'], errors='coerce').ge(8)
+        )
+        & pd.to_numeric(x['macd_hist'], errors='coerce').gt(0)
+        & pd.to_numeric(x['volume_ratio_20'], errors='coerce').ge(.90)
+    )
+
+    signal = base & (breakout | pullback | ignition)
+    e = x.loc[signal].copy()
+    if e.empty:
+        return e
+
+    accel_score = (50 + 2.5 * pd.to_numeric(e['acceleration'], errors='coerce').fillna(0)).clip(0,100)
+    extension_penalty = (
+        10 * (
+            pd.to_numeric(e['ma20_distance'], errors='coerce').clip(lower=0)
+            / e['_fast_ma20_cap'].replace(0,np.nan)
+        ).fillna(0)
+        + 5 * (
+            pd.to_numeric(e['ret_5'], errors='coerce').clip(lower=0)
+            / e['_fast_ret5_cap'].replace(0,np.nan)
+        ).fillna(0)
+    )
+    e['fast_score'] = (
+        .30 * pd.to_numeric(e['short_momentum_score'], errors='coerce').fillna(0)
+        + .20 * pd.to_numeric(e['leadership_score'], errors='coerce').fillna(0)
+        + .15 * pd.to_numeric(e['flow_score'], errors='coerce').fillna(0)
+        + .15 * pd.to_numeric(e['trend_score'], errors='coerce').fillna(0)
+        + .10 * pd.to_numeric(e['sector_score'], errors='coerce').fillna(0)
+        + .10 * accel_score
+        - extension_penalty
+    )
+    e['fast_setup'] = np.select(
+        [breakout.loc[e.index], pullback.loc[e.index], ignition.loc[e.index]],
+        ['FAST BREAKOUT','PULLBACK RECLAIM','MOMENTUM IGNITION'],
+        default='FAST SETUP',
+    )
+    e['entry_price'] = pd.to_numeric(e['close'], errors='coerce')
+    # Suggest a local risk band for the fast engine. Final execution still uses
+    # the structure-aware risk module; this is for daily triage / sizing.
+    atr_stop = atr.loc[e.index].mul(1.5).clip(lower=.035, upper=.08).fillna(.05)
+    struct = 1 - pd.to_numeric(e['prior_low_10'], errors='coerce') / e['entry_price']
+    struct = struct.where(struct.gt(0))
+    e['fast_stop_pct'] = pd.concat([atr_stop, struct], axis=1).max(axis=1, skipna=True).clip(upper=.08)
+    e['fast_target_1r'] = e['entry_price'] * (1 + e['fast_stop_pct'])
+    e['fast_target_2r'] = e['entry_price'] * (1 + 2 * e['fast_stop_pct'])
+    e = e.rename(columns={'date':'entry_date'})
+
+    cols = [
+        'entry_date','ticker','sector','fast_setup','fast_score','entry_price','fast_stop_pct',
+        'fast_target_1r','fast_target_2r','leadership_score','short_momentum_score',
+        'flow_score','trend_score','sector_score','acceleration','ma20_distance','ret_5',
+        'volume_ratio_20','macd_hist','atr_pct_20','stage',
+    ]
+    e = e[[col for col in cols if col in e.columns]]
+    e = e.sort_values(['entry_date','fast_score'], ascending=[True,False])
+    if top_n_per_day > 0:
+        e = e.groupby('entry_date', group_keys=False).head(int(top_n_per_day))
+    return e.reset_index(drop=True)
+
+
+def build_fast_trade_candidates(
+    scored_history: pd.DataFrame,
+    top_n: int = 5,
+    max_age_sessions: int = 1,
+    **kwargs,
+) -> pd.DataFrame:
+    """Return current short-horizon setups; less restrictive than V4 swing entries."""
+    if scored_history is None or scored_history.empty or top_n <= 0:
+        return pd.DataFrame()
+    x = scored_history.copy()
+    x['date'] = pd.to_datetime(x['date']).dt.normalize()
+    x = x.sort_values(['ticker','date']).reset_index(drop=True)
+    latest_date = x['date'].max()
+
+    events = build_fast_trade_signal_history(x, **kwargs)
+    if events.empty:
+        return pd.DataFrame()
+
+    latest_event = events.sort_values(['ticker','entry_date']).groupby('ticker',as_index=False).tail(1)
+    age_rows=[]
+    for ticker,g in x.groupby('ticker'):
+        ds=g['date'].drop_duplicates().sort_values().tolist()
+        pos={pd.Timestamp(d):i for i,d in enumerate(ds)}
+        for _,r in latest_event[latest_event['ticker'].eq(ticker)].iterrows():
+            age_rows.append((r.name,max(0,len(ds)-1-pos.get(pd.Timestamp(r['entry_date']),len(ds)-1))))
+    age_map=dict(age_rows)
+    latest_event['entry_age_sessions']=[age_map.get(i,999) for i in latest_event.index]
+    out=latest_event[
+        latest_event['entry_age_sessions'].le(int(max_age_sessions))
+    ].copy()
+    if out.empty:
+        return out
+
+    latest_cols=['ticker','close','ma20_distance','ret_5','short_momentum_score','leadership_score','flow_score','trend_score','sector_score','stage']
+    latest=x[x['date'].eq(latest_date)][[c for c in latest_cols if c in x.columns]].copy()
+    latest=latest.rename(columns={'close':'current_price'})
+    out=out.merge(latest,on='ticker',how='left',suffixes=('','_current'))
+    out['since_entry_pct']=pd.to_numeric(out['current_price'],errors='coerce')/pd.to_numeric(out['entry_price'],errors='coerce')-1
+    out['fast_rank_score']=(
+        pd.to_numeric(out['fast_score'],errors='coerce')
+        - 2*out['entry_age_sessions']
+        - 35*out['since_entry_pct'].clip(lower=0)
+    )
+    out=out.sort_values(['fast_rank_score','fast_score'],ascending=False).head(int(top_n)).reset_index(drop=True)
+    out['fast_rank']=out.index+1
+    out['status']='TRADE NOW'
+    cols=[
+        'fast_rank','ticker','sector','status','fast_setup','fast_rank_score','entry_date',
+        'entry_price','current_price','since_entry_pct','fast_stop_pct','fast_target_1r','fast_target_2r',
+        'short_momentum_score_current','leadership_score_current','flow_score_current','trend_score_current',
+        'sector_score_current','acceleration','ma20_distance_current','ret_5_current','volume_ratio_20',
+        'atr_pct_20','stage_current',
+    ]
+    out=out[[c for c in cols if c in out.columns]].rename(columns={
+        'short_momentum_score_current':'short_momentum_score',
+        'leadership_score_current':'leadership_score',
+        'flow_score_current':'flow_score',
+        'trend_score_current':'trend_score',
+        'sector_score_current':'sector_score',
+        'ma20_distance_current':'ma20_distance',
+        'ret_5_current':'ret_5',
+        'stage_current':'stage',
+    })
+    return out
