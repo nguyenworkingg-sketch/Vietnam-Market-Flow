@@ -1456,7 +1456,7 @@ def render_dashboard(
       <div class='note' style='margin-bottom:10px'>Fast engine là lớp riêng cho trading ngắn hạn: <b>không bắt buộc RS60/120, weekly trend hay long-momentum persistence</b>. Nó ưu tiên sức mạnh 5–20 phiên, dòng tiền, tăng tốc và trigger cục bộ; stop/target được scale theo ATR. V4 strict swing vẫn giữ bên dưới để không trộn hai horizon.</div>
       {entry_status_html}
       <div class='table-wrap'>{entry_table_html}</div>
-      <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>Fast technical chart</div><h2>Nến · Volume · MACD</h2></div><span class='tag'>{entry_chart_label}</span></div>
+      <div class='section-head' style='margin-top:14px'><div><div class='section-kicker'>Fast technical chart</div><h2>Biểu đồ nến · Volume · MACD</h2></div><span class='tag'>{entry_chart_label}</span></div>
       {entry_chart_html}
       <details class='swing-details' style='margin-top:14px'>
         <summary>V4 Swing / Strict gate — xem setup trung hạn</summary>
