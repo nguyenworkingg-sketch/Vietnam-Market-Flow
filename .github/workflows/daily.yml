@@ -106,6 +106,8 @@ jobs:
             outputs/model_portfolio_10.csv
             outputs/top3_entry_candidates.csv
             outputs/top3_entry_watchlist.csv
+            outputs/fast_trade_candidates.csv
+            outputs/fast_trade_history.csv
             outputs/entry_signal_history.csv
             outputs/entry_signal_audit.csv
             outputs/entry_lifecycle_audit.csv
