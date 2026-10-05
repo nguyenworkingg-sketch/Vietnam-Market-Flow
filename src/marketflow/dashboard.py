@@ -1214,6 +1214,10 @@ def render_dashboard(
             min_buy_zone_pct=float(fast_cfg.get('min_buy_zone_pct',0.015)),
             max_buy_zone_pct=float(fast_cfg.get('max_buy_zone_pct',0.04)),
             trade_now_setups=tuple(fast_cfg.get('trade_now_setups',['PULLBACK RECLAIM'])),
+            quality_min_fast_score=float(fast_cfg.get('quality_min_fast_score',75)),
+            quality_min_leadership=float(fast_cfg.get('quality_min_leadership',80)),
+            quality_min_flow=float(fast_cfg.get('quality_min_flow',70)),
+            quality_min_sector=float(fast_cfg.get('quality_min_sector',60)),
             min_leadership=float(fast_cfg.get('min_leadership',55)),
             min_short_momentum=float(fast_cfg.get('min_short_momentum',65)),
             min_flow=float(fast_cfg.get('min_flow',50)),
@@ -1277,16 +1281,20 @@ def render_dashboard(
     # Primary actionable panel: fast 3-10 session setups. The strict V4 swing
     # engine remains available below for slower, higher-conviction entries.
     if fast_trade_candidates is not None and not fast_trade_candidates.empty:
+        high_count = int(fast_trade_candidates['status'].eq('HIGH CONVICTION').sum()) if 'status' in fast_trade_candidates.columns else 0
         trade_now_count = int(fast_trade_candidates['status'].eq('TRADE NOW').sum()) if 'status' in fast_trade_candidates.columns else 0
+        wait_quality_count = int(fast_trade_candidates['status'].eq('WAIT QUALITY').sum()) if 'status' in fast_trade_candidates.columns else 0
         wait_count = int(fast_trade_candidates['status'].eq('WAIT PULLBACK').sum()) if 'status' in fast_trade_candidates.columns else 0
         retest_count = int(fast_trade_candidates['status'].isin(['RETEST READY','WAIT RETEST']).sum()) if 'status' in fast_trade_candidates.columns else 0
         momentum_count = int(fast_trade_candidates['status'].isin(['CONFIRM MOMENTUM','WAIT COOL-OFF']).sum()) if 'status' in fast_trade_candidates.columns else 0
         watch_count = int(fast_trade_candidates['status'].eq('WATCH ONLY').sum()) if 'status' in fast_trade_candidates.columns else 0
-        status_class = 'entry-live' if trade_now_count else 'entry-zero'
+        status_class = 'entry-live' if (high_count + trade_now_count) else 'entry-zero'
         fast_status_html = (
-            f"<div class='{status_class}'><b>{trade_now_count} TRADE NOW</b> — phiên {html.escape(dt)}"
-            f" · {wait_count} chờ pullback · {retest_count} breakout/retest"
-            f" · {momentum_count} momentum-confirm · {watch_count} watch-only.</div>"
+            f"<div class='{status_class}'><b>{high_count} HIGH CONVICTION</b>"
+            f" · <b>{trade_now_count} TRADE NOW</b> — phiên {html.escape(dt)}"
+            f" · {wait_quality_count} chờ quality · {wait_count} chờ pullback"
+            f" · {retest_count} breakout/retest · {momentum_count} momentum-confirm"
+            f" · {watch_count} watch-only.</div>"
         )
         fast_table_html = _table(
             fast_trade_candidates,
