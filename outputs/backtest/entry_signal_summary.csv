@@ -1,19 +1,19 @@
 scope,horizon,metric,mean,median,hit_rate,count
 ALL,5,absolute,-0.012851037851037916,-0.012851037851037916,0.0,2
 ALL,5,market_alpha,-0.011744688306706164,-0.011744688306706164,0.5,2
-ALL,5,sector_alpha,0.0019418615572461273,0.0019418615572461273,0.5,2
+ALL,5,sector_alpha,0.0030199881242905513,0.0030199881242905513,0.5,2
 ALL,20,absolute,-0.02476343101343098,-0.02476343101343098,0.5,2
 ALL,20,market_alpha,-0.03544194163429454,-0.03544194163429454,0.5,2
-ALL,20,sector_alpha,-0.019247434623901327,-0.019247434623901327,0.5,2
+ALL,20,sector_alpha,-0.02004829664265606,-0.02004829664265606,0.5,2
 ALL,60,absolute,,,,0
 ALL,60,market_alpha,,,,0
 ALL,60,sector_alpha,,,,0
 Pullback resume + HTF confirm,5,absolute,-0.012851037851037916,-0.012851037851037916,0.0,2
 Pullback resume + HTF confirm,5,market_alpha,-0.011744688306706164,-0.011744688306706164,0.5,2
-Pullback resume + HTF confirm,5,sector_alpha,0.0019418615572461273,0.0019418615572461273,0.5,2
+Pullback resume + HTF confirm,5,sector_alpha,0.0030199881242905513,0.0030199881242905513,0.5,2
 Pullback resume + HTF confirm,20,absolute,-0.02476343101343098,-0.02476343101343098,0.5,2
 Pullback resume + HTF confirm,20,market_alpha,-0.03544194163429454,-0.03544194163429454,0.5,2
-Pullback resume + HTF confirm,20,sector_alpha,-0.019247434623901327,-0.019247434623901327,0.5,2
+Pullback resume + HTF confirm,20,sector_alpha,-0.02004829664265606,-0.02004829664265606,0.5,2
 Pullback resume + HTF confirm,60,absolute,,,,0
 Pullback resume + HTF confirm,60,market_alpha,,,,0
 Pullback resume + HTF confirm,60,sector_alpha,,,,0
